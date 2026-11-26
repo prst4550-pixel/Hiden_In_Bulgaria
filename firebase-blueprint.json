@@ -1,0 +1,262 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Потребителски профил, синхронизиран с Firebase Auth",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$",
+          "description": "Firebase Auth UID на потребителя"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100,
+          "description": "Публично име на потребителя"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 160,
+          "description": "Имейл адрес (само за собственик и администратор)"
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 512,
+          "description": "URL към профилна снимка"
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "admin"],
+          "description": "Роля в платформата"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Сървърен timestamp при създаване"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Сървърен timestamp при последна промяна"
+        }
+      },
+      "required": ["uid", "displayName", "email", "role", "createdAt", "updatedAt"]
+    },
+    "FavoritePlace": {
+      "title": "FavoritePlace",
+      "description": "Запазен любим обект в личния профил на потребителя",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "placeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "placeName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160
+        },
+        "regionName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "categoryName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "imageUrl": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["userId", "placeId", "placeName", "regionName", "categoryName", "createdAt"]
+    },
+    "CommunitySuggestion": {
+      "title": "CommunitySuggestion",
+      "description": "Предложение за нов скрит обект от общността",
+      "type": "object",
+      "properties": {
+        "authorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "name": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 160
+        },
+        "region": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 120
+        },
+        "category": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 100
+        },
+        "latitude": {
+          "type": "number"
+        },
+        "longitude": {
+          "type": "number"
+        },
+        "description": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 2000
+        },
+        "source": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 300
+        },
+        "imageUrl": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "approved", "rejected"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "authorUid",
+        "authorName",
+        "name",
+        "region",
+        "category",
+        "latitude",
+        "longitude",
+        "description",
+        "source",
+        "status",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "PlaceReview": {
+      "title": "PlaceReview",
+      "description": "Потребителски отзив и оценка за природен или исторически обект",
+      "type": "object",
+      "properties": {
+        "placeId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "authorUid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "author": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "rating": {
+          "type": "integer"
+        },
+        "comment": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 1500
+        },
+        "visitSeason": {
+          "type": "string",
+          "minLength": 2,
+          "maxLength": 60
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["placeId", "authorUid", "author", "rating", "comment", "visitSeason", "createdAt"]
+    },
+    "AdminRecord": {
+      "title": "AdminRecord",
+      "description": "Регистър с администраторски UID права",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "grantedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "grantedAt"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Лични профили с изолирани PII данни (имейл/роля)"
+    },
+    "/users/{userId}/favorites/{placeId}": {
+      "schema": { "$ref": "#/entities/FavoritePlace" },
+      "description": "Списък с любими дестинации, принадлежащи на конкретен потребител"
+    },
+    "/suggestions/{suggestionId}": {
+      "schema": { "$ref": "#/entities/CommunitySuggestion" },
+      "description": "Предложения от общността за нови скрити места"
+    },
+    "/reviews/{reviewId}": {
+      "schema": { "$ref": "#/entities/PlaceReview" },
+      "description": "Публични отзиви и оценки към обекти от каталога"
+    },
+    "/admins/{userId}": {
+      "schema": { "$ref": "#/entities/AdminRecord" },
+      "description": "Списък на оторизираните администратори"
+    }
+  }
+}

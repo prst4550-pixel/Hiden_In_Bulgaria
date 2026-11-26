@@ -1,0 +1,232 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global default-deny safety net
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Shared hardened primitives
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'prst4550@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (isVerifiedUser() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)));
+    }
+
+    // Validation Blueprints
+    function isValidUserProfile(data, userId) {
+      return data.keys().hasAll(['uid', 'displayName', 'email', 'role', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['uid', 'displayName', 'email', 'photoURL', 'role', 'createdAt', 'updatedAt'])
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512))
+        && data.role in ['user', 'admin']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidFavoritePlace(data, userId, placeId) {
+      return data.keys().hasAll(['userId', 'placeId', 'placeName', 'regionName', 'categoryName', 'createdAt'])
+        && data.keys().hasOnly(['userId', 'placeId', 'placeName', 'regionName', 'categoryName', 'imageUrl', 'createdAt'])
+        && isValidId(data.userId)
+        && data.userId == userId
+        && isValidId(data.placeId)
+        && data.placeId == placeId
+        && data.placeName is string && data.placeName.size() >= 1 && data.placeName.size() <= 160
+        && data.regionName is string && data.regionName.size() >= 1 && data.regionName.size() <= 120
+        && data.categoryName is string && data.categoryName.size() >= 1 && data.categoryName.size() <= 100
+        && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 512))
+        && data.createdAt is timestamp;
+    }
+
+    function isValidSuggestion(data) {
+      return data.keys().hasAll(['authorUid', 'authorName', 'name', 'region', 'category', 'latitude', 'longitude', 'description', 'source', 'status', 'createdAt', 'updatedAt'])
+        && data.keys().hasOnly(['authorUid', 'authorName', 'name', 'region', 'category', 'latitude', 'longitude', 'description', 'source', 'imageUrl', 'status', 'createdAt', 'updatedAt'])
+        && isValidId(data.authorUid)
+        && data.authorName is string && data.authorName.size() >= 1 && data.authorName.size() <= 100
+        && data.name is string && data.name.size() >= 2 && data.name.size() <= 160
+        && data.region is string && data.region.size() >= 2 && data.region.size() <= 120
+        && data.category is string && data.category.size() >= 2 && data.category.size() <= 100
+        && data.latitude is number && data.latitude >= 41.0 && data.latitude <= 44.5
+        && data.longitude is number && data.longitude >= 22.0 && data.longitude <= 29.0
+        && data.description is string && data.description.size() >= 10 && data.description.size() <= 2000
+        && data.source is string && data.source.size() >= 2 && data.source.size() <= 300
+        && (!('imageUrl' in data) || (data.imageUrl is string && data.imageUrl.size() <= 512))
+        && data.status in ['pending', 'approved', 'rejected']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    function isValidReview(data) {
+      return data.keys().hasAll(['placeId', 'authorUid', 'author', 'rating', 'comment', 'visitSeason', 'createdAt'])
+        && data.keys().hasOnly(['placeId', 'authorUid', 'author', 'rating', 'comment', 'visitSeason', 'createdAt'])
+        && isValidId(data.placeId)
+        && isValidId(data.authorUid)
+        && data.author is string && data.author.size() >= 1 && data.author.size() <= 100
+        && data.rating is int && data.rating >= 1 && data.rating <= 5
+        && data.comment is string && data.comment.size() >= 3 && data.comment.size() <= 1500
+        && data.visitSeason is string && data.visitSeason.size() >= 2 && data.visitSeason.size() <= 60
+        && data.createdAt is timestamp;
+    }
+
+    function isValidAdminRecord(data, userId) {
+      return data.keys().hasAll(['uid', 'email', 'grantedAt'])
+        && data.keys().hasOnly(['uid', 'email', 'grantedAt'])
+        && isValidId(data.uid)
+        && data.uid == userId
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 160
+        && data.grantedAt is timestamp;
+    }
+
+    // /users/{userId} - PII isolated strictly to owner or verified admin
+    match /users/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.uid == request.auth.uid);
+
+      allow create: if isVerifiedUser()
+        && isValidId(userId)
+        && isOwner(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == request.auth.uid
+        && incoming().email == request.auth.token.email
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && (incoming().role == 'user' || isBootstrappedAdmin());
+
+      allow update: if isVerifiedUser()
+        && isValidId(userId)
+        && isValidUserProfile(incoming(), userId)
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          isAdmin() ||
+          (isOwner(userId)
+            && incoming().role == existing().role
+            && incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'photoURL', 'updatedAt']))
+        );
+
+      allow delete: if isValidId(userId) && isAdmin();
+
+      // /users/{userId}/favorites/{placeId} - User-owned favorites subcollection
+      match /favorites/{placeId} {
+        allow get: if isValidId(userId) && isValidId(placeId) && isOwner(userId);
+        allow list: if isSignedIn() && resource.data.userId == request.auth.uid && request.auth.uid == userId;
+
+        allow create: if isVerifiedUser()
+          && isValidId(userId)
+          && isValidId(placeId)
+          && isOwner(userId)
+          && isValidFavoritePlace(incoming(), userId, placeId)
+          && incoming().userId == request.auth.uid
+          && incoming().createdAt == request.time;
+
+        allow update: if false;
+
+        allow delete: if isValidId(userId) && isValidId(placeId) && isOwner(userId);
+      }
+    }
+
+    // /suggestions/{suggestionId} - Community submissions & admin moderation
+    match /suggestions/{suggestionId} {
+      allow get: if isValidId(suggestionId) && (
+        isAdmin() || (isSignedIn() && existing().authorUid == request.auth.uid)
+      );
+      allow list: if isBootstrappedAdmin() || (isSignedIn() && resource.data.authorUid == request.auth.uid);
+
+      allow create: if isVerifiedUser()
+        && isValidId(suggestionId)
+        && isValidSuggestion(incoming())
+        && incoming().authorUid == request.auth.uid
+        && incoming().status == 'pending'
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(suggestionId)
+        && isValidSuggestion(incoming())
+        && incoming().authorUid == existing().authorUid
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          // Tier 1: Admin moderation (approve/reject)
+          (isAdmin() && incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])) ||
+          // Tier 2: Author edit only while still pending (terminal states locked)
+          (isOwner(existing().authorUid)
+            && existing().status == 'pending'
+            && incoming().status == 'pending'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['name', 'region', 'category', 'latitude', 'longitude', 'description', 'source', 'imageUrl', 'updatedAt']))
+        );
+
+      allow delete: if isValidId(suggestionId) && isAdmin();
+    }
+
+    // /reviews/{reviewId} - Publicly readable non-PII reviews, verified create
+    match /reviews/{reviewId} {
+      allow get: if isValidId(reviewId);
+      allow list: if resource.data.placeId is string;
+
+      allow create: if isVerifiedUser()
+        && isValidId(reviewId)
+        && isValidReview(incoming())
+        && incoming().authorUid == request.auth.uid
+        && incoming().createdAt == request.time;
+
+      allow update: if isVerifiedUser()
+        && isValidId(reviewId)
+        && isValidReview(incoming())
+        && incoming().authorUid == existing().authorUid
+        && incoming().placeId == existing().placeId
+        && incoming().createdAt == existing().createdAt
+        && (isOwner(existing().authorUid) || isAdmin())
+        && incoming().diff(existing()).affectedKeys().hasOnly(['rating', 'comment', 'visitSeason']);
+
+      allow delete: if isValidId(reviewId) && (
+        isAdmin() || (isSignedIn() && existing().authorUid == request.auth.uid)
+      );
+    }
+
+    // /admins/{userId} - Admin registry locked to bootstrapped admin
+    match /admins/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isBootstrappedAdmin());
+      allow list: if isBootstrappedAdmin();
+
+      allow create: if isBootstrappedAdmin()
+        && isValidId(userId)
+        && isValidAdminRecord(incoming(), userId)
+        && incoming().grantedAt == request.time;
+
+      allow update: if false;
+      allow delete: if isBootstrappedAdmin() && isValidId(userId);
+    }
+  }
+}

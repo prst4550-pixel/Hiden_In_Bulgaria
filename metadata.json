@@ -1,0 +1,6 @@
+{
+  "name": "Скрито в България",
+  "description": "Интерактивна платформа за откриване на малко известни светилища, древни крепости, водопади, пещери и тайни маршрути в България.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
