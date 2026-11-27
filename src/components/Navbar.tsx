@@ -109,11 +109,11 @@ export const Navbar: React.FC<NavbarProps> = ({
           className="flex items-center gap-2.5 sm:gap-3 text-left group focus:outline-none shrink-0 transition-transform duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] hover:scale-[1.02] active:scale-[0.98]"
           title="Скрито в България"
         >
-          <div className="relative w-14 h-14 sm:w-[68px] sm:h-[68px] rounded-full overflow-hidden shrink-0 shadow-[0_8px_22px_-4px_rgba(28,25,23,0.28)] border-2 border-emerald-600 ring-2 ring-amber-500/70 bg-white group-hover:scale-105 group-hover:border-emerald-500 transition-all duration-300 flex items-center justify-center">
+          <div className="relative w-12 h-12 sm:w-14 sm:h-14 rounded-full overflow-hidden shrink-0 shadow-[0_8px_22px_-4px_rgba(28,25,23,0.28)] border-2 border-amber-500/80 ring-2 ring-emerald-700/60 bg-[#13191d] group-hover:scale-105 group-hover:border-amber-400 transition-all duration-300 flex items-center justify-center">
             <img
-              src="/assets/aistudio/Gemini_Generated_Image_mmkbywmmkbywmmkb_135f5291.jpg"
+              src="/logo-emblem.jpg"
               alt="Скрито в България емблема"
-              className="w-full h-full object-cover object-center scale-[1.72] brightness-105 contrast-105 group-hover:rotate-6 transition-transform duration-500"
+              className="w-full h-full object-cover object-center scale-[1.34] group-hover:scale-[1.38] transition-transform duration-500"
               onError={(e) => {
                 const img = e.target as HTMLImageElement;
                 img.onerror = null;

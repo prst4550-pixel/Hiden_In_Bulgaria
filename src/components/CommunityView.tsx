@@ -1,15 +1,31 @@
 import React, { useState, useEffect } from 'react';
 import { submitSuggestion } from '../services/api';
-import { Category, Region } from '../types';
-import { PlusCircle, ShieldCheck, CheckCircle2, AlertCircle, Compass, HelpCircle } from 'lucide-react';
+import { Category, Region, User } from '../types';
+import { PlusCircle, ShieldCheck, CheckCircle2, AlertCircle, Lock } from 'lucide-react';
 
 interface CommunityViewProps {
   categories: Category[];
   regions: Region[];
   onOpenAdmin: () => void;
+  onExploreMap?: () => void;
+  isAdmin?: boolean;
+  currentUser?: User | null;
+  onRequireAuth?: (
+    message: string,
+    action: (user: User) => void | Promise<void>,
+    tab?: 'login' | 'register'
+  ) => boolean;
 }
 
-export const CommunityView: React.FC<CommunityViewProps> = ({ categories, regions, onOpenAdmin }) => {
+export const CommunityView: React.FC<CommunityViewProps> = ({
+  categories,
+  regions,
+  onOpenAdmin,
+  onExploreMap,
+  isAdmin = false,
+  currentUser,
+  onRequireAuth,
+}) => {
   const [name, setName] = useState('');
   const [region, setRegion] = useState(regions[0]?.name || 'Южен централен (Родопи и Тракия)');
   const [category, setCategory] = useState(categories[0]?.name || 'Древни светилища');
@@ -23,6 +39,7 @@ export const CommunityView: React.FC<CommunityViewProps> = ({ categories, region
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [queuedAutoSubmit, setQueuedAutoSubmit] = useState(false);
 
   useEffect(() => {
     if (regions.length > 0 && !regions.some((r) => r.name === region)) {
@@ -36,12 +53,10 @@ export const CommunityView: React.FC<CommunityViewProps> = ({ categories, region
     }
   }, [categories, category]);
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const performSubmit = async () => {
     setSuccessMessage(null);
     setErrorMessage(null);
 
-    // Validate coordinates
     const latNum = parseFloat(latitude);
     const lngNum = parseFloat(longitude);
     if (isNaN(latNum) || isNaN(lngNum) || latNum < 41 || latNum > 44.5 || lngNum < 22 || lngNum > 29) {
@@ -80,6 +95,40 @@ export const CommunityView: React.FC<CommunityViewProps> = ({ categories, region
     }
   };
 
+  useEffect(() => {
+    if (currentUser && queuedAutoSubmit) {
+      setQueuedAutoSubmit(false);
+      void performSubmit();
+    }
+  }, [currentUser, queuedAutoSubmit]);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setSuccessMessage(null);
+    setErrorMessage(null);
+
+    const latNum = parseFloat(latitude);
+    const lngNum = parseFloat(longitude);
+    if (isNaN(latNum) || isNaN(lngNum) || latNum < 41 || latNum > 44.5 || lngNum < 22 || lngNum > 29) {
+      setErrorMessage(
+        'Моля, въведете географски координати на територията на България (Ширина ~41.2 до 44.3, Дължина ~22.3 до 28.6).'
+      );
+      return;
+    }
+
+    if (!currentUser && onRequireAuth) {
+      onRequireAuth(
+        'Влезте в профила си или създайте регистрация, за да изпратите предложението си за ново място.',
+        () => {
+          setQueuedAutoSubmit(true);
+        }
+      );
+      return;
+    }
+
+    await performSubmit();
+  };
+
   return (
     <div className="w-full max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10 space-y-10">
       {/* Editorial Header */}
@@ -96,12 +145,23 @@ export const CommunityView: React.FC<CommunityViewProps> = ({ categories, region
           </p>
         </div>
 
-        <button
-          onClick={onOpenAdmin}
-          className="liquid-glass-focus-pill px-4 py-2 rounded-full text-xs text-stone-800 hover:text-stone-950 font-bold self-start sm:self-end shadow-xs cursor-pointer hover:scale-105 transition-all"
-        >
-          Административен панел →
-        </button>
+        {isAdmin ? (
+          <button
+            type="button"
+            onClick={onOpenAdmin}
+            className="liquid-glass-focus-pill px-4 py-2 rounded-full text-xs text-stone-800 hover:text-stone-950 font-bold self-start sm:self-end shadow-xs cursor-pointer hover:scale-105 transition-all"
+          >
+            Административен панел →
+          </button>
+        ) : onExploreMap ? (
+          <button
+            type="button"
+            onClick={onExploreMap}
+            className="liquid-glass-focus-pill px-4 py-2 rounded-full text-xs text-stone-800 hover:text-stone-950 font-bold self-start sm:self-end shadow-xs cursor-pointer hover:scale-105 transition-all"
+          >
+            Разгледай картата →
+          </button>
+        ) : null}
       </div>
 
       {/* Verification Policy Banner */}
@@ -119,6 +179,45 @@ export const CommunityView: React.FC<CommunityViewProps> = ({ categories, region
 
       {/* Suggestion Form Card */}
       <div className="bg-[#FBF9F5] rounded-2xl border border-stone-300 p-6 sm:p-8 shadow-sm">
+        {!currentUser && onRequireAuth && (
+          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 text-amber-950 rounded-xl flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs sm:text-sm">
+            <div className="flex items-start sm:items-center gap-2.5">
+              <Lock className="w-4 h-4 text-amber-800 shrink-0 mt-0.5 sm:mt-0" />
+              <span>
+                За да изпратите предложение за нов обект, влезте в профила си или се регистрирайте.
+              </span>
+            </div>
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() =>
+                  onRequireAuth(
+                    'Влезте в профила си, за да изпратите предложение за нов обект.',
+                    () => {},
+                    'login'
+                  )
+                }
+                className="px-3.5 py-1.5 rounded-full bg-stone-900 hover:bg-stone-800 text-amber-200 font-bold text-xs cursor-pointer transition-colors"
+              >
+                Вход
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  onRequireAuth(
+                    'Създайте регистрация, за да предлагате нови места.',
+                    () => {},
+                    'register'
+                  )
+                }
+                className="px-3.5 py-1.5 rounded-full bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold text-xs cursor-pointer transition-colors"
+              >
+                Регистрация
+              </button>
+            </div>
+          </div>
+        )}
+
         {successMessage && (
           <div className="mb-6 p-4 bg-emerald-50 border border-emerald-200 text-emerald-800 rounded-xl flex items-start gap-3 text-xs sm:text-sm">
             <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />

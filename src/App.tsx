@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useCallback } from 'react';
-import { Place, Category, Region, Route, User, ChatMessage } from './types';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Place, Category, Region, Route, User, ChatMessage, UserProfileData } from './types';
 import {
   fetchPlaces,
   fetchCategories,
@@ -61,22 +61,44 @@ const TAB_TITLES: Record<string, string> = {
   contact: 'Контакти — Скрито в България',
 };
 
-const GUEST_FAV_KEY = 'hb_guest_favorites';
-const GUEST_TRAIL_KEY = 'hb_guest_recent_trail';
-const GUEST_ROUTES_KEY = 'hb_guest_custom_routes';
-const GUEST_CHAT_KEY = 'hb_guest_guide_chat';
+const TAB_DESCRIPTIONS: Record<string, string> = {
+  home: 'Открийте малко известни древни светилища, крепости, водопади, пещери и автентични маршрути в България с проверени GPS координати.',
+  map: 'Интерактивна топографска и сателитна карта на скритите забележителности и персонални маршрути в България.',
+  catalog: 'Пълен каталог на верифицираните природни и исторически места в България с филтри по регион, категория и трудност.',
+  routes: 'Експедиционни маршрути и планиране на собствен маршрут с интерактивно проследяване на картата.',
+  guide: 'Интерактивен пътеводител с проверка на цени, хотели, прогноза за времето и разпознаване на забележителности по снимка.',
+  community: 'Предложете ново скрито природно или историческо място в България за проверка и включване в каталога.',
+  ssms: 'Административна T-SQL конзола и управление на каталога.',
+  privacy: 'Политика за поверителност и защита на личните данни на платформата Скрито в България.',
+  terms: 'Общи условия за ползване на платформата Скрито в България.',
+  cookies: 'Информация за локалното съхранение и настройките за поверителност.',
+  contact: 'Контакти, редакционни запитвания и спешни номера в България.',
+};
 
-function readGuestJson<T>(key: string, fallback: T): T {
+const VALID_TABS = new Set(Object.keys(TAB_TITLES));
+
+function getInitialTabFromUrl(): string {
   try {
-    const saved = localStorage.getItem(key);
-    return saved ? (JSON.parse(saved) as T) : fallback;
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get('tab');
+    if (tab && VALID_TABS.has(tab)) {
+      return tab;
+    }
   } catch {
-    return fallback;
+    // ignore URL parse error
   }
+  return 'home';
 }
 
+const GUEST_LEGACY_KEYS = [
+  'hb_guest_favorites',
+  'hb_guest_recent_trail',
+  'hb_guest_custom_routes',
+  'hb_guest_guide_chat',
+];
+
 export default function App() {
-  const [currentTab, setCurrentTab] = useState<string>('home');
+  const [currentTab, setCurrentTab] = useState<string>(() => getInitialTabFromUrl());
   const [places, setPlaces] = useState<Place[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [regions, setRegions] = useState<Region[]>([]);
@@ -89,23 +111,20 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authInitialTab, setAuthInitialTab] = useState<'login' | 'register'>('login');
+  const [authPromptMessage, setAuthPromptMessage] = useState<string | null>(null);
+  const pendingAuthActionRef = useRef<
+    ((user: User, profile?: UserProfileData | null) => void | Promise<void>) | null
+  >(null);
   const [isEditPlaceOpen, setIsEditPlaceOpen] = useState(false);
   const [editTargetPlace, setEditTargetPlace] = useState<Place | null>(null);
+  const [confirmDeletePlaceTarget, setConfirmDeletePlaceTarget] = useState<Place | null>(null);
 
-  // Per-profile isolated states (Guest mode uses guest-only localStorage; signed-in user uses server profile DB)
-  const [favorites, setFavorites] = useState<string[]>(() =>
-    readGuestJson<string[]>(GUEST_FAV_KEY, [])
-  );
-  const [recentTrail, setRecentTrail] = useState<Place[]>(() =>
-    readGuestJson<Place[]>(GUEST_TRAIL_KEY, [])
-  );
+  // Per-profile isolated states (populated strictly for authenticated users)
+  const [favorites, setFavorites] = useState<string[]>([]);
+  const [recentTrail, setRecentTrail] = useState<Place[]>([]);
   const [pendingTrailIds, setPendingTrailIds] = useState<string[] | null>(null);
-  const [customRoutes, setCustomRoutes] = useState<Route[]>(() =>
-    readGuestJson<Route[]>(GUEST_ROUTES_KEY, [])
-  );
-  const [guideMessages, setGuideMessages] = useState<ChatMessage[]>(() =>
-    readGuestJson<ChatMessage[]>(GUEST_CHAT_KEY, [])
-  );
+  const [customRoutes, setCustomRoutes] = useState<Route[]>([]);
+  const [guideMessages, setGuideMessages] = useState<ChatMessage[]>([]);
   const [activeMapRoute, setActiveMapRoute] = useState<Route | null>(null);
 
   // Modal states
@@ -126,10 +145,47 @@ export default function App() {
 
   useEffect(() => {
     document.title = TAB_TITLES[currentTab] || TAB_TITLES.home;
+    const metaDesc = document.querySelector('meta[name="description"]');
+    if (metaDesc) {
+      metaDesc.setAttribute('content', TAB_DESCRIPTIONS[currentTab] || TAB_DESCRIPTIONS.home);
+    }
+    try {
+      const url = new URL(window.location.href);
+      if (currentTab === 'home') {
+        url.searchParams.delete('tab');
+      } else {
+        url.searchParams.set('tab', currentTab);
+      }
+      window.history.replaceState(null, '', url.pathname + url.search);
+    } catch {
+      // ignore history update restriction
+    }
   }, [currentTab]);
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      if (isEditPlaceOpen) {
+        setIsEditPlaceOpen(false);
+        setEditTargetPlace(null);
+      } else if (isAdminOpen) {
+        setIsAdminOpen(false);
+      } else if (isProfileOpen) {
+        setIsProfileOpen(false);
+      } else if (isFavoritesOpen) {
+        setIsFavoritesOpen(false);
+      } else if (isAuthOpen) {
+        setIsAuthOpen(false);
+      } else if (selectedPlace) {
+        setSelectedPlace(null);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [isEditPlaceOpen, isAdminOpen, isProfileOpen, isFavoritesOpen, isAuthOpen, selectedPlace]);
+
   const loadIsolatedUserProfile = useCallback(
-    async (placesCatalog: Place[]) => {
+    async (placesCatalog: Place[]): Promise<UserProfileData | null> => {
       try {
         const profile = await fetchProfileData();
         setFavorites(Array.isArray(profile.favorites) ? profile.favorites : []);
@@ -147,8 +203,10 @@ export default function App() {
           setPendingTrailIds(trailIds);
           setRecentTrail([]);
         }
+        return profile;
       } catch (err) {
         console.warn('Could not load isolated user profile:', err);
+        return null;
       }
     },
     []
@@ -174,12 +232,6 @@ export default function App() {
         saveProfileTrail(updated.map((p) => p.id)).catch((err) =>
           console.warn('Failed to save trail to profile:', err)
         );
-      } else {
-        try {
-          localStorage.setItem(GUEST_TRAIL_KEY, JSON.stringify(updated));
-        } catch (err) {
-          console.warn('LocalStorage error:', err);
-        }
       }
       return updated;
     });
@@ -189,21 +241,22 @@ export default function App() {
     setRecentTrail([]);
     if (currentUser) {
       saveProfileTrail([]).catch((err) => console.warn('Failed to clear profile trail:', err));
-    } else {
-      try {
-        localStorage.removeItem(GUEST_TRAIL_KEY);
-      } catch (err) {
-        console.warn('LocalStorage clear error:', err);
-      }
     }
   };
 
   useEffect(() => {
+    try {
+      for (const k of GUEST_LEGACY_KEYS) {
+        localStorage.removeItem(k);
+      }
+    } catch {
+      // ignore storage restriction
+    }
     loadAllData();
     getCurrentUser().then((user) => {
       if (user) {
         setCurrentUser(user);
-        loadIsolatedUserProfile(places);
+        void loadIsolatedUserProfile(places);
       }
     });
 
@@ -232,22 +285,50 @@ export default function App() {
     }
   };
 
+  const requireAuthForAction = useCallback(
+    (
+      message: string,
+      action: (user: User, profile?: UserProfileData | null) => void | Promise<void>,
+      tab: 'login' | 'register' = 'login'
+    ): boolean => {
+      if (currentUser) {
+        void action(currentUser);
+        return true;
+      }
+      pendingAuthActionRef.current = action;
+      setAuthPromptMessage(message);
+      setAuthInitialTab(tab);
+      setIsAuthOpen(true);
+      return false;
+    },
+    [currentUser]
+  );
+
   const handleToggleFavorite = (placeId: string) => {
+    if (!currentUser) {
+      requireAuthForAction(
+        'Влезте в профила си или създайте регистрация, за да запазвате любими места във вашия профил.',
+        (_user, profile) => {
+          const baseFavs = Array.isArray(profile?.favorites) ? profile.favorites : [];
+          const updated = baseFavs.includes(placeId)
+            ? baseFavs.filter((id) => id !== placeId)
+            : [...baseFavs, placeId];
+          setFavorites(updated);
+          saveProfileFavorites(updated).catch((err) =>
+            console.warn('Failed to save favorites to profile:', err)
+          );
+        }
+      );
+      return;
+    }
+
     setFavorites((prev) => {
       const updated = prev.includes(placeId)
         ? prev.filter((id) => id !== placeId)
         : [...prev, placeId];
-      if (currentUser) {
-        saveProfileFavorites(updated).catch((err) =>
-          console.warn('Failed to save favorites to profile:', err)
-        );
-      } else {
-        try {
-          localStorage.setItem(GUEST_FAV_KEY, JSON.stringify(updated));
-        } catch (err) {
-          console.warn('LocalStorage error:', err);
-        }
-      }
+      saveProfileFavorites(updated).catch((err) =>
+        console.warn('Failed to save favorites to profile:', err)
+      );
       return updated;
     });
   };
@@ -269,56 +350,50 @@ export default function App() {
   };
 
   const handleSaveCustomRoute = async (route: Route) => {
-    if (currentUser) {
-      try {
-        const res = await saveProfileRoute(route);
-        setCustomRoutes(res.customRoutes);
-        setActiveMapRoute((prev) =>
-          prev && (prev.id === route.id || prev.id === res.route.id) ? res.route : prev
-        );
-      } catch (err: any) {
-        setAppError(err.message || 'Грешка при запис на маршрута във вашия профил.');
-      }
+    if (!currentUser) {
+      requireAuthForAction(
+        'Влезте или създайте акаунт, за да създавате и запазвате лични маршрути.',
+        async () => {
+          try {
+            const res = await saveProfileRoute(route);
+            setCustomRoutes(res.customRoutes);
+            setActiveMapRoute((prev) =>
+              prev && (prev.id === route.id || prev.id === res.route.id) ? res.route : prev
+            );
+          } catch (err: any) {
+            setAppError(err.message || 'Грешка при запис на маршрута във вашия профил.');
+          }
+        }
+      );
       return;
     }
 
-    setCustomRoutes((prev) => {
-      const exists = prev.some((r) => r.id === route.id);
-      const updated = exists
-        ? prev.map((r) => (r.id === route.id ? route : r))
-        : [route, ...prev];
-      try {
-        localStorage.setItem(GUEST_ROUTES_KEY, JSON.stringify(updated));
-      } catch (err) {
-        console.warn('LocalStorage custom routes error:', err);
-      }
-      return updated;
-    });
-    setActiveMapRoute((prev) => (prev?.id === route.id ? route : prev));
+    try {
+      const res = await saveProfileRoute(route);
+      setCustomRoutes(res.customRoutes);
+      setActiveMapRoute((prev) =>
+        prev && (prev.id === route.id || prev.id === res.route.id) ? res.route : prev
+      );
+    } catch (err: any) {
+      setAppError(err.message || 'Грешка при запис на маршрута във вашия профил.');
+    }
   };
 
   const handleDeleteCustomRoute = async (routeId: string) => {
-    if (currentUser) {
-      try {
-        const updatedRoutes = await deleteProfileRoute(routeId);
-        setCustomRoutes(updatedRoutes);
-        setActiveMapRoute((prev) => (prev?.id === routeId ? null : prev));
-      } catch (err: any) {
-        setAppError(err.message || 'Грешка при изтриване на маршрута.');
-      }
+    if (!currentUser) {
+      requireAuthForAction(
+        'Влезте в профила си, за да управлявате личните си маршрути.',
+        () => {}
+      );
       return;
     }
-
-    setCustomRoutes((prev) => {
-      const updated = prev.filter((r) => r.id !== routeId);
-      try {
-        localStorage.setItem(GUEST_ROUTES_KEY, JSON.stringify(updated));
-      } catch (err) {
-        console.warn('LocalStorage custom routes error:', err);
-      }
-      return updated;
-    });
-    setActiveMapRoute((prev) => (prev?.id === routeId ? null : prev));
+    try {
+      const updatedRoutes = await deleteProfileRoute(routeId);
+      setCustomRoutes(updatedRoutes);
+      setActiveMapRoute((prev) => (prev?.id === routeId ? null : prev));
+    } catch (err: any) {
+      setAppError(err.message || 'Грешка при изтриване на маршрута.');
+    }
   };
 
   const handleGuideMessagesChange = (messages: ChatMessage[]) => {
@@ -328,46 +403,62 @@ export default function App() {
       saveProfileGuideChat(compact).catch((err) =>
         console.warn('Failed to save guide chat to profile:', err)
       );
-    } else {
-      try {
-        const compact = messages.slice(-25).map(({ imageUrl: _img, ...rest }) => rest);
-        localStorage.setItem(GUEST_CHAT_KEY, JSON.stringify(compact));
-      } catch {
-        // ignore storage quota errors
-      }
     }
   };
 
   const handleExploreRouteOnMap = (route: Route) => {
+    if (!currentUser) {
+      requireAuthForAction(
+        `Влезте или се регистрирайте, за да проследите и използвате маршрута „${route.title}“ на картата.`,
+        () => {
+          setMapTargetPlaceId(null);
+          setActiveMapRoute(route);
+          setCurrentTab('map');
+          window.scrollTo({ top: 120, behavior: 'smooth' });
+        }
+      );
+      return;
+    }
     setMapTargetPlaceId(null);
     setActiveMapRoute(route);
     setCurrentTab('map');
     window.scrollTo({ top: 120, behavior: 'smooth' });
   };
 
-  const handleAuthSuccess = (user: User) => {
+  const handleAuthSuccess = async (user: User) => {
+    const pendingAction = pendingAuthActionRef.current;
+    pendingAuthActionRef.current = null;
+    setAuthPromptMessage(null);
+
+    const profile = await loadIsolatedUserProfile(places);
     setCurrentUser(user);
-    setActiveMapRoute(null);
-    setSelectedPlace(null);
-    setMapTargetPlaceId(null);
-    loadIsolatedUserProfile(places);
-    loadAllData();
+    void loadAllData();
+
+    if (pendingAction) {
+      await pendingAction(user, profile);
+    } else {
+      setActiveMapRoute(null);
+      setSelectedPlace(null);
+      setMapTargetPlaceId(null);
+    }
   };
 
   const handleLogout = async () => {
     await logoutUser();
+    pendingAuthActionRef.current = null;
+    setAuthPromptMessage(null);
     setCurrentUser(null);
     setIsAdminOpen(false);
     setIsProfileOpen(false);
+    setIsFavoritesOpen(false);
     setActiveMapRoute(null);
     setSelectedPlace(null);
     setMapTargetPlaceId(null);
     setPendingTrailIds(null);
-    // Restore strictly guest-isolated state
-    setFavorites(readGuestJson<string[]>(GUEST_FAV_KEY, []));
-    setCustomRoutes(readGuestJson<Route[]>(GUEST_ROUTES_KEY, []));
-    setRecentTrail(readGuestJson<Place[]>(GUEST_TRAIL_KEY, []));
-    setGuideMessages(readGuestJson<ChatMessage[]>(GUEST_CHAT_KEY, []));
+    setFavorites([]);
+    setCustomRoutes([]);
+    setRecentTrail([]);
+    setGuideMessages([]);
   };
 
   const handleAddNewPlace = () => {
@@ -380,12 +471,15 @@ export default function App() {
     setIsEditPlaceOpen(true);
   };
 
-  const handleDeletePlace = async (place: Place) => {
-    if (!window.confirm(`Сигурни ли сте, че искате да изтриете "${place.name}" от каталога?`)) {
-      return;
-    }
+  const handleDeletePlace = (place: Place) => {
+    setConfirmDeletePlaceTarget(place);
+  };
+
+  const confirmDeletePlaceAction = async () => {
+    if (!confirmDeletePlaceTarget) return;
     try {
-      await deletePlace(place.id);
+      await deletePlace(confirmDeletePlaceTarget.id);
+      setConfirmDeletePlaceTarget(null);
       await loadAllData();
     } catch (err: any) {
       setAppError(err.message || 'Грешка при изтриване на обекта.');
@@ -481,9 +575,16 @@ export default function App() {
         }}
         favoritesCount={favorites.length}
         onOpenSuggestModal={() => setCurrentTab('community')}
-        onOpenFavorites={() => setIsFavoritesOpen(true)}
+        onOpenFavorites={() =>
+          requireAuthForAction(
+            'Влезте в профила си или се регистрирайте, за да виждате и управлявате вашите любими места.',
+            () => setIsFavoritesOpen(true)
+          )
+        }
         currentUser={currentUser}
         onOpenAuth={(tab?: 'login' | 'register') => {
+          pendingAuthActionRef.current = null;
+          setAuthPromptMessage(null);
           setAuthInitialTab(tab || 'login');
           setIsAuthOpen(true);
         }}
@@ -510,6 +611,7 @@ export default function App() {
               onSelectCategory={handleHeroCategory}
               onSearchSubmit={handleHeroSearch}
               isAdmin={isAdmin}
+              placesCount={places.length || 48}
             />
 
             {/* Curated Editorial Spotlight: Grand Feature + Secondary Gems */}
@@ -890,6 +992,7 @@ export default function App() {
             activeRoute={activeMapRoute}
             onSelectActiveRoute={setActiveMapRoute}
             onSaveCustomRoute={handleSaveCustomRoute}
+            onRequireAuth={requireAuthForAction}
           />
         )}
 
@@ -922,9 +1025,12 @@ export default function App() {
             onDeleteCustomRoute={handleDeleteCustomRoute}
             currentUser={currentUser}
             onOpenAuth={(tab) => {
+              pendingAuthActionRef.current = null;
+              setAuthPromptMessage(null);
               setAuthInitialTab(tab || 'login');
               setIsAuthOpen(true);
             }}
+            onRequireAuth={requireAuthForAction}
           />
         )}
 
@@ -935,6 +1041,7 @@ export default function App() {
             currentUser={currentUser}
             persistedMessages={guideMessages}
             onPersistedMessagesChange={handleGuideMessagesChange}
+            onRequireAuth={requireAuthForAction}
           />
         )}
 
@@ -975,6 +1082,10 @@ export default function App() {
             categories={categories}
             regions={regions}
             onOpenAdmin={() => setIsAdminOpen(true)}
+            onExploreMap={() => setCurrentTab('map')}
+            isAdmin={isAdmin}
+            currentUser={currentUser}
+            onRequireAuth={requireAuthForAction}
           />
         )}
 
@@ -1001,6 +1112,8 @@ export default function App() {
         allPlaces={places}
         isAdmin={isAdmin}
         onEditPlace={handleEditPlace}
+        currentUser={currentUser}
+        onRequireAuth={requireAuthForAction}
       />
 
       {/* Edit Place Modal (Admin Only) */}
@@ -1020,7 +1133,12 @@ export default function App() {
       <AuthModal
         isOpen={isAuthOpen}
         initialTab={authInitialTab}
-        onClose={() => setIsAuthOpen(false)}
+        promptMessage={authPromptMessage}
+        onClose={() => {
+          setIsAuthOpen(false);
+          setAuthPromptMessage(null);
+          pendingAuthActionRef.current = null;
+        }}
         onSuccess={handleAuthSuccess}
       />
 
@@ -1068,6 +1186,41 @@ export default function App() {
           onAddNewPlace={handleAddNewPlace}
           onOpenSsms={() => setCurrentTab('ssms')}
         />
+      )}
+
+      {/* Confirm Delete Place Modal */}
+      {confirmDeletePlaceTarget && (
+        <div
+          className="fixed inset-0 z-50 bg-stone-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Потвърждение за изтриване на обект"
+        >
+          <div className="bg-white w-full max-w-md rounded-2xl border border-stone-200 shadow-2xl p-6 space-y-4">
+            <h4 className="font-editorial text-lg font-bold text-stone-950">
+              Изтриване на обект от каталога
+            </h4>
+            <p className="text-xs text-stone-600 leading-relaxed">
+              Сигурни ли сте, че искате да изтриете <strong className="text-stone-900">„{confirmDeletePlaceTarget.name}“</strong> от каталога?
+            </p>
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDeletePlaceTarget(null)}
+                className="px-4 py-2 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-semibold cursor-pointer"
+              >
+                Отказ
+              </button>
+              <button
+                type="button"
+                onClick={confirmDeletePlaceAction}
+                className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white text-xs font-bold cursor-pointer"
+              >
+                Потвърди изтриването
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Curatorial Footer */}

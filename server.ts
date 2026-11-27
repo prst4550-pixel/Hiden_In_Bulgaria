@@ -4,7 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
-import { GoogleGenAI, ThinkingLevel } from '@google/genai';
+import { FunctionDeclaration, GoogleGenAI, ThinkingLevel, Type } from '@google/genai';
 import { PLACES, CATEGORIES, REGIONS, ROUTES } from './src/data/seedData';
 import {
   Place,
@@ -30,6 +30,12 @@ app.set('trust proxy', 1);
 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'prst4550@gmail.com').trim().toLowerCase();
 const ENV_ADMIN_PASSCODE = (process.env.ADMIN_PASSCODE || '').trim();
+const DEFAULT_ADMIN_SALT =
+  (process.env.ADMIN_PASSWORD_SALT || '').trim() ||
+  '21327eb5784b344d221ab8695995d707ac190ed57560bc949d5adacbba06b7fd';
+const DEFAULT_ADMIN_SCRYPT_HASH =
+  (process.env.ADMIN_PASSWORD_HASH || '').trim() ||
+  '98e27d81549dbb27caa2bf43eddd9776193d757f599f752834137ac6d6721d04184365c119c979296c101276e12e2020d6b21573cd0924e59a7fe00342a6255b';
 const VALID_DIFFICULTIES: DifficultyLevel[] = ['Лесен', 'Умерен', 'Труден', 'Екстремен'];
 const ALLOWED_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_BASE64_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -73,6 +79,15 @@ function getAllowedOrigins(req: Request): Set<string> {
     allowed.add(`http://${host}`);
   }
 
+  const referer = req.headers.referer;
+  if (typeof referer === 'string' && referer) {
+    try {
+      allowed.add(new URL(referer).origin);
+    } catch {
+      // ignore invalid referer
+    }
+  }
+
   return allowed;
 }
 
@@ -82,7 +97,8 @@ app.use('/api', (req: Request, res: Response, next: NextFunction) => {
 
   if (origin) {
     const allowedOrigins = getAllowedOrigins(req);
-    if (!allowedOrigins.has(origin)) {
+    const isSameOriginFetch = req.headers['sec-fetch-site'] === 'same-origin';
+    if (!isSameOriginFetch && !allowedOrigins.has(origin)) {
       return res.status(403).json({ error: 'Забранен достъп от неоторизиран домейн (CORS).' });
     }
     res.setHeader('Access-Control-Allow-Origin', origin);
@@ -112,6 +128,13 @@ app.use(
   '/assets',
   express.static(path.resolve(__dirname, 'public/assets'), {
     maxAge: '7d',
+    etag: true,
+  })
+);
+app.use(
+  '/docs',
+  express.static(path.resolve(__dirname, 'public/docs'), {
+    maxAge: '1h',
     etag: true,
   })
 );
@@ -183,8 +206,8 @@ function createRateLimiter(windowMs: number, maxRequests: number, errorMessage: 
 }
 
 const authRateLimiter = createRateLimiter(
-  15 * 60 * 1000,
-  25,
+  10 * 60 * 1000,
+  60,
   'Твърде много опити за вход. Моля, изчакайте няколко минути и опитайте отново.'
 );
 const writeRateLimiter = createRateLimiter(
@@ -213,6 +236,7 @@ export interface DbUser {
   salt: string;
   hashAlgorithm?: 'scrypt' | 'pbkdf2';
   role: 'admin' | 'user';
+  status: 'active' | 'blocked';
   createdAt: string;
 }
 
@@ -255,8 +279,10 @@ function verifyPassword(password: string, user: DbUser): boolean {
 }
 
 function createAdminRecord(): DbUser {
-  const salt = ENV_ADMIN_PASSCODE ? createSalt() : '';
-  const passwordHash = ENV_ADMIN_PASSCODE ? hashPasswordScrypt(ENV_ADMIN_PASSCODE, salt) : '';
+  const salt = ENV_ADMIN_PASSCODE ? createSalt() : DEFAULT_ADMIN_SALT;
+  const passwordHash = ENV_ADMIN_PASSCODE
+    ? hashPasswordScrypt(ENV_ADMIN_PASSCODE, salt)
+    : DEFAULT_ADMIN_SCRYPT_HASH;
   return {
     id: 'usr-admin-1',
     name: 'Администратор',
@@ -265,6 +291,7 @@ function createAdminRecord(): DbUser {
     salt,
     hashAlgorithm: 'scrypt',
     role: 'admin',
+    status: 'active',
     createdAt: new Date().toISOString(),
   };
 }
@@ -293,21 +320,40 @@ function initDatabase(): DatabaseSchema {
       data.userProfiles = {};
     }
 
-    const adminIdx = data.users.findIndex(
-      (u) => u.email.toLowerCase() === ADMIN_EMAIL || u.id === 'usr-admin-1'
-    );
+    data.users = data.users.map((u) => ({
+      ...u,
+      status: u.status === 'blocked' ? 'blocked' : 'active',
+    }));
 
-    if (adminIdx === -1) {
-      data.users.push(createAdminRecord());
+    // Remove any duplicate entries for ADMIN_EMAIL keeping usr-admin-1
+    const primaryAdmin =
+      data.users.find((u) => u.id === 'usr-admin-1') ||
+      data.users.find((u) => u.email.toLowerCase() === ADMIN_EMAIL);
+
+    if (!primaryAdmin) {
+      data.users.unshift(createAdminRecord());
     } else {
-      data.users[adminIdx].email = ADMIN_EMAIL;
-      data.users[adminIdx].role = 'admin';
-      if (ENV_ADMIN_PASSCODE) {
-        const salt = createSalt();
-        data.users[adminIdx].salt = salt;
-        data.users[adminIdx].passwordHash = hashPasswordScrypt(ENV_ADMIN_PASSCODE, salt);
-        data.users[adminIdx].hashAlgorithm = 'scrypt';
+      primaryAdmin.id = primaryAdmin.id || 'usr-admin-1';
+      primaryAdmin.email = ADMIN_EMAIL;
+      primaryAdmin.role = 'admin';
+      primaryAdmin.status = 'active';
+      if (!primaryAdmin.passwordHash || !primaryAdmin.salt) {
+        if (ENV_ADMIN_PASSCODE) {
+          const salt = createSalt();
+          primaryAdmin.salt = salt;
+          primaryAdmin.passwordHash = hashPasswordScrypt(ENV_ADMIN_PASSCODE, salt);
+        } else {
+          primaryAdmin.salt = DEFAULT_ADMIN_SALT;
+          primaryAdmin.passwordHash = DEFAULT_ADMIN_SCRYPT_HASH;
+        }
+        primaryAdmin.hashAlgorithm = 'scrypt';
       }
+      data.users = [
+        primaryAdmin,
+        ...data.users.filter(
+          (u) => u !== primaryAdmin && u.email.toLowerCase() !== ADMIN_EMAIL
+        ),
+      ];
     }
 
     fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
@@ -484,37 +530,80 @@ function issueSessionToken(user: DbUser): string {
   return token;
 }
 
-function getUserFromRequest(req: Request): DbUser | null {
+function toSafeUser(u: DbUser): User {
+  return {
+    id: u.id,
+    name: u.name,
+    email: u.email,
+    role: u.role,
+    status: u.status === 'blocked' ? 'blocked' : 'active',
+    createdAt: u.createdAt,
+  };
+}
+
+function revokeUserSessions(userId: string) {
+  for (const [token, session] of activeSessions.entries()) {
+    if (session.userId === userId) {
+      activeSessions.delete(token);
+    }
+  }
+}
+
+function getSessionAuthState(req: Request): { user: DbUser | null; blocked: boolean } {
   const authHeader = req.headers.authorization;
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
-    return null;
+    return { user: null, blocked: false };
   }
   const token = authHeader.substring(7).trim();
-  if (!token) return null;
+  if (!token) return { user: null, blocked: false };
 
   const session = activeSessions.get(token);
-  if (!session) return null;
+  if (!session) return { user: null, blocked: false };
 
   if (Date.now() > session.expiresAt) {
     activeSessions.delete(token);
-    return null;
+    return { user: null, blocked: false };
   }
 
   const user = db.users.find((u) => u.id === session.userId);
-  return user || null;
+  if (!user) {
+    activeSessions.delete(token);
+    return { user: null, blocked: false };
+  }
+
+  if (user.status === 'blocked') {
+    activeSessions.delete(token);
+    return { user: null, blocked: true };
+  }
+
+  return { user, blocked: false };
+}
+
+function getUserFromRequest(req: Request): DbUser | null {
+  return getSessionAuthState(req).user;
 }
 
 function requireAuth(req: Request, res: Response, next: NextFunction) {
-  const user = getUserFromRequest(req);
+  const { user, blocked } = getSessionAuthState(req);
+  if (blocked) {
+    return res.status(403).json({
+      error: 'Вашият акаунт е блокиран от администратор. Достъпът до тази функция е спрян.',
+    });
+  }
   if (!user) {
-    return res.status(401).json({ error: 'Изисква се вход в профила за достъп до тези данни.' });
+    return res.status(401).json({
+      error: 'За да използвате тази функция, влезте в профила си или се регистрирайте.',
+    });
   }
   res.locals.currentUser = user;
   next();
 }
 
 function requireAdmin(req: Request, res: Response, next: NextFunction) {
-  const user = getUserFromRequest(req);
+  const { user, blocked } = getSessionAuthState(req);
+  if (blocked) {
+    return res.status(403).json({ error: 'Акаунтът е блокиран от администратор.' });
+  }
   if (!user) {
     return res.status(401).json({ error: 'Изисква се автентикация за достъп до този ресурс.' });
   }
@@ -653,10 +742,11 @@ app.get('/api/reviews/:placeId', (req: Request, res: Response) => {
   res.json(placeReviews);
 });
 
-app.post('/api/reviews', writeRateLimiter, (req: Request, res: Response) => {
+app.post('/api/reviews', requireAuth, writeRateLimiter, (req: Request, res: Response) => {
   const { placeId, author, rating, comment, visitSeason } = req.body || {};
   const cleanPlaceId = cleanText(placeId, 80);
-  const cleanAuthor = cleanText(author, 80);
+  const authUser = res.locals.currentUser as DbUser;
+  const cleanAuthor = authUser.name || cleanText(author, 80);
   const cleanComment = cleanText(comment, 1200);
   const cleanSeason = cleanText(visitSeason || '2026', 60);
   const numericRating = Math.round(Number(rating));
@@ -670,12 +760,11 @@ app.post('/api/reviews', writeRateLimiter, (req: Request, res: Response) => {
     return res.status(404).json({ error: 'Избраният обект не съществува в каталога.' });
   }
 
-  const authUser = getUserFromRequest(req);
   const newReview: Review = {
     id: 'rev-' + Date.now(),
     placeId: cleanPlaceId,
-    author: authUser ? authUser.name : cleanAuthor,
-    userId: authUser?.id,
+    author: cleanAuthor,
+    userId: authUser.id,
     rating: Math.max(1, Math.min(5, numericRating)),
     comment: cleanComment,
     visitSeason: cleanSeason,
@@ -704,7 +793,7 @@ app.get('/api/suggestions', requireAdmin, (_req: Request, res: Response) => {
   res.json(db.suggestions);
 });
 
-app.post('/api/suggestions', writeRateLimiter, (req: Request, res: Response) => {
+app.post('/api/suggestions', requireAuth, writeRateLimiter, (req: Request, res: Response) => {
   const { name, region, category, latitude, longitude, description, source, imageUrl, contact } =
     req.body || {};
 
@@ -743,7 +832,7 @@ app.post('/api/suggestions', writeRateLimiter, (req: Request, res: Response) => 
     return res.status(400).json({ error: 'Линкът към снимката трябва да започва с https:// или http://.' });
   }
 
-  const authUser = getUserFromRequest(req);
+  const authUser = res.locals.currentUser as DbUser;
   const newSuggestion: CommunitySuggestion = {
     id: 'sugg-' + Date.now(),
     name: cleanName,
@@ -754,9 +843,9 @@ app.post('/api/suggestions', writeRateLimiter, (req: Request, res: Response) => 
     description: cleanDesc,
     source: cleanSource,
     imageUrl: sanitizedImage || undefined,
-    contact: cleanContact || authUser?.email || undefined,
+    contact: cleanContact || authUser.email || undefined,
     status: 'pending',
-    userId: authUser?.id,
+    userId: authUser.id,
     createdAt: new Date().toISOString(),
   };
 
@@ -922,6 +1011,7 @@ app.post('/api/auth/claim-admin', authRateLimiter, (req: Request, res: Response)
       salt,
       hashAlgorithm: 'scrypt',
       role: 'admin',
+      status: 'active',
       createdAt: new Date().toISOString(),
     };
     db.users.unshift(admin);
@@ -933,20 +1023,13 @@ app.post('/api/auth/claim-admin', authRateLimiter, (req: Request, res: Response)
     admin.salt = salt;
     admin.hashAlgorithm = 'scrypt';
     admin.role = 'admin';
+    admin.status = 'active';
   }
 
   saveDatabase();
 
   const token = issueSessionToken(admin);
-  const safeUser: User = {
-    id: admin.id,
-    name: admin.name,
-    email: admin.email,
-    role: admin.role,
-    createdAt: admin.createdAt,
-  };
-
-  res.status(201).json({ token, user: safeUser });
+  res.status(201).json({ token, user: toSafeUser(admin) });
 });
 
 app.post('/api/auth/register', authRateLimiter, (req: Request, res: Response) => {
@@ -981,6 +1064,7 @@ app.post('/api/auth/register', authRateLimiter, (req: Request, res: Response) =>
     salt,
     hashAlgorithm: 'scrypt',
     role: 'user',
+    status: 'active',
     createdAt: new Date().toISOString(),
   };
 
@@ -988,15 +1072,7 @@ app.post('/api/auth/register', authRateLimiter, (req: Request, res: Response) =>
   saveDatabase();
 
   const token = issueSessionToken(newUser);
-  const safeUser: User = {
-    id: newUser.id,
-    name: newUser.name,
-    email: newUser.email,
-    role: newUser.role,
-    createdAt: newUser.createdAt,
-  };
-
-  res.status(201).json({ token, user: safeUser });
+  res.status(201).json({ token, user: toSafeUser(newUser) });
 });
 
 app.post('/api/auth/login', authRateLimiter, (req: Request, res: Response) => {
@@ -1023,6 +1099,13 @@ app.post('/api/auth/login', authRateLimiter, (req: Request, res: Response) => {
     return res.status(401).json({ error: 'Невалиден имейл или парола.' });
   }
 
+  if (user.status === 'blocked') {
+    revokeUserSessions(user.id);
+    return res.status(403).json({
+      error: 'Вашият акаунт е блокиран от администратор. Входът е временно ограничен.',
+    });
+  }
+
   // Transparently upgrade legacy PBKDF2 hash to scrypt on login
   if (user.hashAlgorithm === 'pbkdf2') {
     const newSalt = createSalt();
@@ -1033,31 +1116,18 @@ app.post('/api/auth/login', authRateLimiter, (req: Request, res: Response) => {
   }
 
   const token = issueSessionToken(user);
-  const safeUser: User = {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    createdAt: user.createdAt,
-  };
-
-  res.json({ token, user: safeUser });
+  res.json({ token, user: toSafeUser(user) });
 });
 
 app.get('/api/auth/me', (req: Request, res: Response) => {
-  const user = getUserFromRequest(req);
+  const { user, blocked } = getSessionAuthState(req);
+  if (blocked) {
+    return res.status(403).json({ error: 'Вашият акаунт е блокиран от администратор.' });
+  }
   if (!user) {
     return res.status(401).json({ error: 'Не сте влезли в профила си.' });
   }
-
-  const safeUser: User = {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    createdAt: user.createdAt,
-  };
-  res.json({ user: safeUser });
+  res.json({ user: toSafeUser(user) });
 });
 
 app.post('/api/auth/logout', (req: Request, res: Response) => {
@@ -1070,14 +1140,73 @@ app.post('/api/auth/logout', (req: Request, res: Response) => {
 });
 
 app.get('/api/users', requireAdmin, (_req: Request, res: Response) => {
-  const safeUsers: User[] = db.users.map((u) => ({
-    id: u.id,
-    name: u.name,
-    email: u.email,
-    role: u.role,
-    createdAt: u.createdAt,
-  }));
+  const safeUsers: User[] = [...db.users]
+    .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+    .map(toSafeUser);
   res.json(safeUsers);
+});
+
+app.patch('/api/users/:id/status', requireAdmin, (req: Request, res: Response) => {
+  const adminUser = res.locals.currentUser as DbUser;
+  const targetId = cleanText(req.params.id, 100);
+  const { status } = req.body || {};
+
+  if (status !== 'active' && status !== 'blocked') {
+    return res.status(400).json({ error: 'Невалиден статус на профила.' });
+  }
+
+  const targetUser = db.users.find((u) => u.id === targetId);
+  if (!targetUser) {
+    return res.status(404).json({ error: 'Потребителят не е намерен.' });
+  }
+
+  if (targetUser.id === adminUser.id || targetUser.role === 'admin') {
+    return res.status(403).json({
+      error: 'Администраторският акаунт не може да бъде блокиран.',
+    });
+  }
+
+  targetUser.status = status;
+  if (status === 'blocked') {
+    revokeUserSessions(targetUser.id);
+  }
+  saveDatabase();
+
+  res.json({
+    user: toSafeUser(targetUser),
+    message:
+      status === 'blocked'
+        ? `Потребителят ${targetUser.name} (${targetUser.email}) беше блокиран.`
+        : `Потребителят ${targetUser.name} (${targetUser.email}) беше отблокиран.`,
+  });
+});
+
+app.delete('/api/users/:id', requireAdmin, (req: Request, res: Response) => {
+  const adminUser = res.locals.currentUser as DbUser;
+  const targetId = cleanText(req.params.id, 100);
+
+  const targetIdx = db.users.findIndex((u) => u.id === targetId);
+  if (targetIdx === -1) {
+    return res.status(404).json({ error: 'Потребителят не е намерен.' });
+  }
+
+  const targetUser = db.users[targetIdx];
+  if (targetUser.id === adminUser.id || targetUser.role === 'admin') {
+    return res.status(403).json({
+      error: 'Администраторският акаунт не може да бъде изтрит.',
+    });
+  }
+
+  db.users.splice(targetIdx, 1);
+  if (db.userProfiles && db.userProfiles[targetId]) {
+    delete db.userProfiles[targetId];
+  }
+  revokeUserSessions(targetId);
+  saveDatabase();
+
+  res.json({
+    message: `Профилът на ${targetUser.name} (${targetUser.email}) беше изтрит окончателно.`,
+  });
 });
 
 // -------------------------------------------------------------
@@ -1100,14 +1229,7 @@ app.patch('/api/profile', requireAuth, (req: Request, res: Response) => {
   user.name = cleanName;
   saveDatabase();
 
-  const safeUser: User = {
-    id: user.id,
-    name: user.name,
-    email: user.email,
-    role: user.role,
-    createdAt: user.createdAt,
-  };
-  res.json({ user: safeUser });
+  res.json({ user: toSafeUser(user) });
 });
 
 app.put('/api/profile/favorites', requireAuth, (req: Request, res: Response) => {
@@ -1840,6 +1962,13 @@ interface WebSearchResult {
   snippet: string;
 }
 
+interface ToolExecutionResult {
+  summary: string;
+  sources: { title: string; uri: string }[];
+  queries: string[];
+  matchedPlaceIds: string[];
+}
+
 function decodeXmlEntities(str: string): string {
   return str
     .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
@@ -1852,12 +1981,64 @@ function decodeXmlEntities(str: string): string {
     .trim();
 }
 
+function stripMarkdownFormatting(text: string): string {
+  return text
+    .replace(/\[ID:\s*[^\]]+\]/g, '')
+    .replace(/\*\*([^*]+)\*\*/g, '$1')
+    .replace(/(^|[\s(])__([^_\n]+)__(?=[\s).,!?:;]|$)/g, '$1$2')
+    .replace(/^\s*#{1,6}\s+/gm, '')
+    .replace(/^\s*\*\s+/gm, '• ')
+    .replace(/\*\*/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function userExplicitlyRequestedLinks(message: string): boolean {
+  const text = (message || '').toLowerCase();
+  return /(линк|линкове|линка|линковете|връзка|връзки|уебсайт|уеб\s*сайт|сайт(?:а|ът|ове|овете)?|адрес(?:а|и|ите)?|\burl\b|страница\s+за\s+резерв|отвор(?:я|и|им|ете)|резервационн(?:а|и)\s+страниц|прати\s+.*(?:booking|букинг)|дай\s+.*(?:booking|букинг)|къде\s+да\s+(?:ги\s+)?резервирам|директ(?:ен|ни)\s+линк)/i.test(
+    text
+  );
+}
+
+function isHotelTopicQuery(text: string): boolean {
+  return /(хотел|хотели|къщ(?:а|и)\s+за\s+гости|нощувк|настаняв|хиж(?:а|и)|спа\s+комплекс|почивка|апартамент(?:и)?\s+под\s+наем|booking|букинг)/i.test(
+    (text || '').toLowerCase()
+  );
+}
+
+function stripUrlsFromText(text: string): string {
+  return text
+    .replace(/\[([^\]\n]+)\]\((https?:\/\/[^\s)]+)\)/g, '$1')
+    .replace(/\(\s*https?:\/\/[^\s)]+\s*\)/g, '')
+    .replace(/(?:линк|сайт|booking(?:\.com)?\s*търсене|уеб\s*адрес|url)\s*[:\-–—]?\s*https?:\/\/\S+/gi, '')
+    .replace(/https?:\/\/\S+/gi, '')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\(\s*\)/g, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function calculateDistanceKmServer(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return Number((R * c).toFixed(1));
+}
+
 function describeWmoCodeBg(code: number): string {
   if (code === 0) return 'Ясно и слънчево';
   if (code <= 2) return 'Предимно ясно до разкъсана облачност';
   if (code === 3) return 'Облачно';
   if (code === 45 || code === 48) return 'Мъгла';
-  if (code >= 51 && code <= 57) return 'Ръмеж';
+  if (code >= 51 && code <= 57) return 'Слаб ръмеж';
   if ((code >= 61 && code <= 67) || (code >= 80 && code <= 82)) return 'Дъжд / валежи';
   if ((code >= 71 && code <= 77) || code === 85 || code === 86) return 'Снеговалеж';
   if (code >= 95) return 'Гръмотевична буря';
@@ -1873,271 +2054,713 @@ const KNOWN_BG_PEAKS: { keys: string[]; name: string; lat: number; lon: number; 
   { keys: ['шипка', 'shipka'], name: 'Проход и връх Шипка', lat: 42.7483, lon: 25.3214, elev: 1326 },
   { keys: ['софия', 'sofia'], name: 'София', lat: 42.6977, lon: 23.3219, elev: 550 },
   { keys: ['пловдив', 'plovdiv'], name: 'Пловдив', lat: 42.1354, lon: 24.7453, elev: 164 },
+  { keys: ['варна', 'varna'], name: 'Варна', lat: 43.2141, lon: 27.9147, elev: 35 },
+  { keys: ['бургас', 'burgas'], name: 'Бургас', lat: 42.5048, lon: 27.4626, elev: 18 },
   { keys: ['банско', 'bansko'], name: 'Банско', lat: 41.8383, lon: 23.4885, elev: 925 },
+  { keys: ['боровец', 'borovets'], name: 'Боровец', lat: 42.265, lon: 23.6061, elev: 1350 },
+  { keys: ['пампорово', 'pamporovo'], name: 'Пампорово', lat: 41.6542, lon: 24.6967, elev: 1650 },
   { keys: ['смолян', 'родопи'], name: 'Смолян / Централни Родопи', lat: 41.5774, lon: 24.7011, elev: 1002 },
+  { keys: ['велинград', 'velingrad'], name: 'Велинград', lat: 42.0275, lon: 23.9917, elev: 760 },
+  { keys: ['велико търново', 'търново'], name: 'Велико Търново', lat: 43.0757, lon: 25.6172, elev: 210 },
+  { keys: ['триград', 'trigrad'], name: 'Триград (Родопи)', lat: 41.5997, lon: 24.3806, elev: 1240 },
 ];
+
+async function resolveBgLocation(
+  query: string
+): Promise<{ name: string; lat: number; lon: number; matchedPlaceIds: string[] } | null> {
+  const lower = query.toLowerCase().trim();
+
+  for (const peak of KNOWN_BG_PEAKS) {
+    if (peak.keys.some((k) => lower.includes(k))) {
+      return { name: peak.name, lat: peak.lat, lon: peak.lon, matchedPlaceIds: [] };
+    }
+  }
+
+  for (const p of db.places) {
+    const firstPart = p.name.toLowerCase().split('(')[0].trim();
+    const coreTokens = firstPart
+      .split(/\s+/)
+      .filter(
+        (w) =>
+          w.length >= 4 &&
+          !['пещера', 'водопад', 'крепост', 'скално', 'светилище', 'манастир', 'езеро', 'резерват'].includes(w)
+      );
+    if (lower.includes(firstPart) || coreTokens.some((tok) => lower.includes(tok))) {
+      return { name: p.name, lat: p.latitude, lon: p.longitude, matchedPlaceIds: [p.id] };
+    }
+  }
+
+  try {
+    const cleanQ = query
+      .replace(/времето|прогноза|хотели|цени|утре|днес|около|в|на|българия/gi, ' ')
+      .trim()
+      .slice(0, 60);
+    if (cleanQ.length >= 2) {
+      const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
+        cleanQ
+      )}&count=5&language=bg&format=json`;
+      const r = await fetch(geoUrl, { signal: AbortSignal.timeout(3500) });
+      if (r.ok) {
+        const g: any = await r.json();
+        const bgMatch = g?.results?.find((item: any) => item.country_code === 'BG') || g?.results?.[0];
+        if (bgMatch) {
+          return {
+            name: `${bgMatch.name}${bgMatch.admin1 ? ` (${bgMatch.admin1})` : ''}`,
+            lat: Number(bgMatch.latitude),
+            lon: Number(bgMatch.longitude),
+            matchedPlaceIds: [],
+          };
+        }
+      }
+    }
+  } catch {
+    // ignore geocode timeout
+  }
+
+  return null;
+}
+
+async function fetchBingRssResults(
+  query: string,
+  limit = 5
+): Promise<{ title: string; uri: string; snippet: string }[]> {
+  try {
+    const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(query)}&format=rss&cc=BG&setlang=bg`;
+    const r = await fetch(bingUrl, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HiddenBulgariaGuide/2.0)' },
+      signal: AbortSignal.timeout(4500),
+    });
+    if (!r.ok) return [];
+    const xml = await r.text();
+    const items = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
+    const out: { title: string; uri: string; snippet: string }[] = [];
+    for (const item of items) {
+      if (out.length >= limit) break;
+      const titleMatch = item.match(/<title>([\s\S]*?)<\/title>/);
+      const linkMatch = item.match(/<link>([\s\S]*?)<\/link>/);
+      const descMatch = item.match(/<description>([\s\S]*?)<\/description>/);
+      const title = titleMatch ? decodeXmlEntities(titleMatch[1]) : '';
+      const uri = linkMatch ? sanitizeExternalUrl(decodeXmlEntities(linkMatch[1])) : null;
+      const snippet = descMatch ? decodeXmlEntities(descMatch[1]) : '';
+      if (title && uri) {
+        out.push({ title: cleanText(title, 110), uri, snippet: cleanText(snippet, 260) });
+      }
+    }
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+async function executeWeatherForecastTool(locationQuery: string): Promise<ToolExecutionResult> {
+  const sources: { title: string; uri: string }[] = [];
+  const queries: string[] = [];
+  const loc =
+    (await resolveBgLocation(locationQuery)) || {
+      name: locationQuery.trim() || 'София',
+      lat: 42.6977,
+      lon: 23.3219,
+      matchedPlaceIds: [],
+    };
+
+  const cleanLocName = loc.name.split('(')[0].trim();
+  const sinoptikSearchUrl = `https://www.sinoptik.bg/search?q=${encodeURIComponent(cleanLocName)}`;
+  queries.push(`прогноза времето ${cleanLocName} 7 дни`);
+
+  try {
+    const meteoUrl = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&current=temperature_2m,apparent_temperature,precipitation,cloud_cover,weather_code,wind_speed_10m,wind_gusts_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,cloud_cover_mean,weather_code&timezone=Europe%2FSofia&forecast_days=7`;
+    const [meteoRes, sinoptikHits] = await Promise.all([
+      fetch(meteoUrl, { signal: AbortSignal.timeout(4500) }),
+      fetchBingRssResults(`site:sinoptik.bg ${cleanLocName} прогноза`, 2),
+    ]);
+
+    if (sinoptikHits.length > 0) {
+      sources.push({ title: sinoptikHits[0].title, uri: sinoptikHits[0].uri });
+    } else {
+      sources.push({ title: `Sinoptik.bg — ${cleanLocName}`, uri: sinoptikSearchUrl });
+    }
+    sources.push({ title: `Open-Meteo 7-дневна прогноза: ${cleanLocName}`, uri: 'https://open-meteo.com/en/docs' });
+
+    if (!meteoRes.ok) {
+      return {
+        summary: `Не успях да заредя метеорологичната прогноза за ${loc.name} в момента. Проверете директно на ${sinoptikSearchUrl}.`,
+        sources,
+        queries,
+        matchedPlaceIds: loc.matchedPlaceIds,
+      };
+    }
+
+    const data: any = await meteoRes.json();
+    const cur = data?.current;
+    const daily = data?.daily;
+    const lines: string[] = [];
+
+    if (cur) {
+      lines.push(
+        `Текущи условия за ${loc.name} (${loc.lat.toFixed(3)}, ${loc.lon.toFixed(3)}): ${cur.temperature_2m}°C (усеща се като ${cur.apparent_temperature}°C), ${describeWmoCodeBg(Number(cur.weather_code ?? 0))}, облачност ${cur.cloud_cover ?? 0}%, вятър ${cur.wind_speed_10m} км/ч (пориви до ${cur.wind_gusts_10m ?? cur.wind_speed_10m} км/ч), текущи валежи ${cur.precipitation ?? 0} мм.`
+      );
+    }
+
+    const warnings: string[] = [];
+    if (daily && Array.isArray(daily.time)) {
+      lines.push('Прогноза за следващите 7 дни (днес, утре и напред):');
+      for (let i = 0; i < Math.min(7, daily.time.length); i++) {
+        const dayStr = daily.time[i];
+        const dayTag = i === 0 ? 'Днес' : i === 1 ? 'Утре' : dayStr;
+        const tMin = daily.temperature_2m_min?.[i];
+        const tMax = daily.temperature_2m_max?.[i];
+        const rainProb = daily.precipitation_probability_max?.[i] ?? 0;
+        const rainMm = daily.precipitation_sum?.[i] ?? 0;
+        const windMax = daily.wind_speed_10m_max?.[i] ?? 0;
+        const gustsMax = daily.wind_gusts_10m_max?.[i] ?? windMax;
+        const clouds = daily.cloud_cover_mean?.[i] ?? 0;
+        const code = Number(daily.weather_code?.[i] ?? 0);
+        const cond = describeWmoCodeBg(code);
+
+        lines.push(
+          `- ${dayTag} (${dayStr}): мин ${tMin}°C / макс ${tMax}°C, ${cond}, облачност ${clouds}%, вероятност за валежи ${rainProb}% (${rainMm} мм), вятър до ${windMax} км/ч (пориви ${gustsMax} км/ч).`
+        );
+
+        if (code >= 95) {
+          warnings.push(`${dayTag}: опасност от гръмотевична буря.`);
+        } else if (Number(gustsMax) >= 60 || Number(windMax) >= 45) {
+          warnings.push(`${dayTag}: силен вятър с пориви до ${gustsMax} км/ч — внимание по планински била.`);
+        }
+        if (Number(rainMm) >= 15) {
+          warnings.push(`${dayTag}: очакват се интензивни валежи (${rainMm} мм).`);
+        }
+        if (Number(tMin) <= -5) {
+          warnings.push(`${dayTag}: ниски отрицателни температури (${tMin}°C) — риск от заледяване.`);
+        }
+      }
+    }
+
+    if (warnings.length > 0) {
+      lines.push(`Метеорологични предупреждения: ${warnings.slice(0, 3).join(' ')}`);
+    } else {
+      lines.push('Няма екстремни метеорологични предупреждения за периода, но следете планинската обстановка.');
+    }
+
+    if (sinoptikHits.length > 0 && sinoptikHits[0].snippet) {
+      lines.push(`Sinoptik.bg бележка: ${sinoptikHits[0].snippet} (${sinoptikHits[0].uri})`);
+    }
+
+    return {
+      summary: lines.join('\n'),
+      sources,
+      queries,
+      matchedPlaceIds: loc.matchedPlaceIds,
+    };
+  } catch {
+    return {
+      summary: `Временен проблем при зареждане на метео данни за ${loc.name}. Проверете ${sinoptikSearchUrl}.`,
+      sources,
+      queries,
+      matchedPlaceIds: loc.matchedPlaceIds,
+    };
+  }
+}
+
+async function executeHotelSearchTool(
+  destination: string,
+  budget?: string,
+  includeLinks = false
+): Promise<ToolExecutionResult> {
+  const sources: { title: string; uri: string }[] = [];
+  const queries: string[] = [];
+  const cleanDest = destination.trim() || 'България';
+  const loc = await resolveBgLocation(cleanDest);
+  const searchDestName = (loc?.name || cleanDest).split('(')[0].trim();
+
+  const bookingSearchUrl = `https://www.booking.com/searchresults.bg.html?ss=${encodeURIComponent(
+    `${searchDestName}, България`
+  )}`;
+  if (includeLinks) {
+    sources.push({ title: `Booking.com оферти за ${searchDestName}`, uri: bookingSearchUrl });
+  }
+  queries.push(`Booking.com ${searchDestName} хотели цени`);
+
+  const lines: string[] = [
+    `Търсене на хотели и настаняване за: ${searchDestName}${budget ? ` (Бюджет/предпочитание: ${budget})` : ''}`,
+  ];
+  if (includeLinks) {
+    lines.push(`Директен линк за актуални цени и свободни стаи в Booking.com: ${bookingSearchUrl}`);
+  }
+
+  const [bookingHits, generalHotelHits, osmHotels, osmGuestHouses] = await Promise.all([
+    fetchBingRssResults(`Booking.com ${searchDestName} хотели цени`, 5),
+    fetchBingRssResults(`${searchDestName} хотели цени нощувка`, 4),
+    (async () => {
+      try {
+        const nomUrl = loc
+          ? `https://nominatim.openstreetmap.org/search?q=hotel&format=jsonv2&limit=6&bounded=1&viewbox=${
+              loc.lon - 0.25
+            },${loc.lat + 0.25},${loc.lon + 0.25},${loc.lat - 0.25}&extratags=1&addressdetails=1`
+          : `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+              `хотел ${searchDestName} България`
+            )}&format=jsonv2&limit=5&extratags=1&addressdetails=1`;
+        const r = await fetch(nomUrl, {
+          headers: { 'User-Agent': 'HiddenBulgariaAtlas/2.0' },
+          signal: AbortSignal.timeout(4000),
+        });
+        return r.ok ? ((await r.json()) as any[]) : [];
+      } catch {
+        return [];
+      }
+    })(),
+    (async () => {
+      if (!loc) return [];
+      try {
+        const nomUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
+          'guest_house'
+        )}&format=jsonv2&limit=4&bounded=1&viewbox=${loc.lon - 0.22},${loc.lat + 0.22},${
+          loc.lon + 0.22
+        },${loc.lat - 0.22}&extratags=1&addressdetails=1`;
+        const r = await fetch(nomUrl, {
+          headers: { 'User-Agent': 'HiddenBulgariaAtlas/2.0' },
+          signal: AbortSignal.timeout(3500),
+        });
+        return r.ok ? ((await r.json()) as any[]) : [];
+      } catch {
+        return [];
+      }
+    })(),
+  ]);
+
+  const combinedOsm = [...(Array.isArray(osmHotels) ? osmHotels : []), ...(Array.isArray(osmGuestHouses) ? osmGuestHouses : [])];
+  if (combinedOsm.length > 0) {
+    lines.push(`Реални хотели и къщи за гости в района на ${searchDestName} (OpenStreetMap):`);
+    const seenNames = new Set<string>();
+    for (const item of combinedOsm) {
+      const name = String(item.name || item.display_name?.split(',')[0] || '').trim();
+      if (!name || seenNames.has(name.toLowerCase())) continue;
+      seenNames.add(name.toLowerCase());
+      const stars = item.extratags?.stars ? `${item.extratags.stars}★` : '';
+      const website = sanitizeExternalUrl(item.extratags?.website || item.extratags?.url);
+      const phone = item.extratags?.phone || item.extratags?.['contact:phone'] || '';
+      const town = item.address?.city || item.address?.town || item.address?.village || '';
+      const bookingItemUrl = `https://www.booking.com/searchresults.bg.html?ss=${encodeURIComponent(
+        `${name} ${searchDestName}`
+      )}`;
+      if (includeLinks) {
+        if (website) {
+          sources.push({ title: `${name} — Официален сайт`, uri: website });
+        }
+        sources.push({ title: `${name} в Booking.com`, uri: bookingItemUrl });
+        lines.push(
+          `- ${name}${stars ? ` (${stars})` : ''}${town ? `, ${town}` : ''}${phone ? `, тел: ${phone}` : ''}${
+            website ? `, сайт: ${website}` : ''
+          } | Booking линк: ${bookingItemUrl}`
+        );
+      } else {
+        lines.push(
+          `- ${name}${stars ? ` (${stars})` : ''}${town ? `, ${town}` : ''}${phone ? `, тел: ${phone}` : ''}`
+        );
+      }
+      if (seenNames.size >= 6) break;
+    }
+  }
+
+  const allWebHits = [...bookingHits, ...generalHotelHits];
+  if (allWebHits.length > 0) {
+    lines.push('Уеб резултати и оферти от Booking.com / туристически портали:');
+    for (const hit of allWebHits.slice(0, 6)) {
+      if (includeLinks) {
+        sources.push({ title: hit.title, uri: hit.uri });
+        lines.push(`- ${hit.title}: ${hit.snippet} (${hit.uri})`);
+      } else {
+        lines.push(`- ${hit.title}: ${hit.snippet}`);
+      }
+    }
+  }
+
+  lines.push(
+    'ВАЖНО ПРАВИЛО ЗА ЦЕНИТЕ: Посочвай само конкретни цени, които действително присъстват в горните уеб резултати или Google Search. Ако за конкретен хотел няма изрично изписана актуална цена на нощувка в резултата, НЕ измисляй цифра.'
+  );
+  if (includeLinks) {
+    lines.push(
+      'ВАЖНО ПРАВИЛО ЗА ЛИНКОВЕТЕ: Потребителят ИЗРИЧНО ПОИСКА ЛИНКОВЕ. Предостави директни, кликаеми https://... линкове към хотелите и Booking.com на отделни редове (напр. Име на хотела: https://...).'
+    );
+  } else {
+    lines.push(
+      'ВАЖНО ПРАВИЛО ЗА ЛИНКОВЕТЕ: Потребителят НЕ е поискал линкове в този въпрос. Дай САМО реалните имена на хотелите/къщите за гости, характеристиките и проверените цени (ако има налични) — БЕЗ никакви http/https линкове в отговора! В края спомени кратко, че при желание може да поиска линкове и веднага ще ги изпратиш.'
+    );
+  }
+
+  return {
+    summary: lines.join('\n'),
+    sources,
+    queries,
+    matchedPlaceIds: loc?.matchedPlaceIds || [],
+  };
+}
+
+async function executePlacesAndDiningTool(destinationOrTopic: string): Promise<ToolExecutionResult> {
+  const sources: { title: string; uri: string }[] = [];
+  const queries: string[] = [];
+  const matchedPlaceIds: string[] = [];
+  const lower = destinationOrTopic.toLowerCase();
+  const loc = await resolveBgLocation(destinationOrTopic);
+  const topicLabel = (loc?.name || destinationOrTopic).split('(')[0].trim();
+
+  queries.push(`${topicLabel} забележителности ресторанти работно време цени билети`);
+
+  const matchedCatalog = db.places.filter((p) => {
+    const pName = p.name.toLowerCase();
+    const pReg = p.regionName.toLowerCase();
+    if (lower.includes(pName.split('(')[0].trim()) || pReg.includes(lower)) return true;
+    if (loc) {
+      return calculateDistanceKmServer(loc.lat, loc.lon, p.latitude, p.longitude) <= 35;
+    }
+    return false;
+  });
+
+  const lines: string[] = [];
+  if (matchedCatalog.length > 0) {
+    lines.push(`Близки и свързани обекти от каталога на сайта (${matchedCatalog.length}):`);
+    for (const p of matchedCatalog.slice(0, 6)) {
+      matchedPlaceIds.push(p.id);
+      lines.push(
+        `- ${p.name} (${p.categoryName}, Трудност: ${p.difficulty}, Сезон: ${p.bestSeason}): ${p.shortDescription} | Достъп: ${p.accessTips}`
+      );
+    }
+  }
+
+  const [webInfoHits, osmRestaurants, wikiHits] = await Promise.all([
+    fetchBingRssResults(`${topicLabel} работно време билети забележителности`, 4),
+    (async () => {
+      if (!loc) return [];
+      try {
+        const nomUrl = `https://nominatim.openstreetmap.org/search?q=restaurant&format=jsonv2&limit=5&bounded=1&viewbox=${
+          loc.lon - 0.18
+        },${loc.lat + 0.18},${loc.lon + 0.18},${loc.lat - 0.18}&extratags=1&addressdetails=1`;
+        const r = await fetch(nomUrl, {
+          headers: { 'User-Agent': 'HiddenBulgariaAtlas/2.0' },
+          signal: AbortSignal.timeout(3500),
+        });
+        return r.ok ? ((await r.json()) as any[]) : [];
+      } catch {
+        return [];
+      }
+    })(),
+    (async () => {
+      try {
+        const wikiUrl = `https://bg.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
+          topicLabel
+        )}&srlimit=2&format=json&utf8=1`;
+        const r = await fetch(wikiUrl, {
+          headers: { 'User-Agent': 'HiddenBulgariaGuide/2.0' },
+          signal: AbortSignal.timeout(3500),
+        });
+        if (!r.ok) return [];
+        const data: any = await r.json();
+        return data?.query?.search || [];
+      } catch {
+        return [];
+      }
+    })(),
+  ]);
+
+  if (Array.isArray(osmRestaurants) && osmRestaurants.length > 0) {
+    lines.push(`Реални ресторанти и заведения около ${topicLabel} (OpenStreetMap):`);
+    for (const item of osmRestaurants.slice(0, 5)) {
+      const n = String(item.name || item.display_name?.split(',')[0] || '').trim();
+      if (!n) continue;
+      const cuisine = item.extratags?.cuisine ? ` (${item.extratags.cuisine})` : '';
+      const hours = item.extratags?.opening_hours ? `, раб. време: ${item.extratags.opening_hours}` : '';
+      const web = sanitizeExternalUrl(item.extratags?.website || item.extratags?.url);
+      if (web) sources.push({ title: `${n} — Ресторант`, uri: web });
+      lines.push(`- ${n}${cuisine}${hours}${web ? ` — ${web}` : ''}`);
+    }
+  }
+
+  if (webInfoHits.length > 0) {
+    lines.push('Актуални уеб данни за билети, работно време и забележителности:');
+    for (const hit of webInfoHits) {
+      sources.push({ title: hit.title, uri: hit.uri });
+      lines.push(`- ${hit.title}: ${hit.snippet} (${hit.uri})`);
+    }
+  }
+
+  if (Array.isArray(wikiHits) && wikiHits.length > 0) {
+    for (const hit of wikiHits.slice(0, 2)) {
+      const title = String(hit.title || '');
+      const snippet = decodeXmlEntities(String(hit.snippet || ''));
+      const uri = `https://bg.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`;
+      if (title && snippet) {
+        sources.push({ title: `${title} — Уикипедия`, uri });
+        lines.push(`Уикипедия (${title}): ${snippet}`);
+      }
+    }
+  }
+
+  return {
+    summary: lines.join('\n') || `Няма допълнителни уеб резултати за ${topicLabel}.`,
+    sources,
+    queries,
+    matchedPlaceIds,
+  };
+}
+
+async function executeRoutePlannerTool(
+  regionOrPlaces: string,
+  days = 2
+): Promise<ToolExecutionResult> {
+  const lower = regionOrPlaces.toLowerCase();
+  const loc = await resolveBgLocation(regionOrPlaces);
+
+  let candidatePlaces = db.places.filter((p) => {
+    const first = p.name.toLowerCase().split('(')[0].trim();
+    return (
+      lower.includes(first) ||
+      p.regionName.toLowerCase().includes(lower) ||
+      lower.includes(p.regionName.split('(')[0].trim().toLowerCase())
+    );
+  });
+
+  if (candidatePlaces.length < 3 && loc) {
+    candidatePlaces = [...db.places]
+      .map((p) => ({
+        place: p,
+        dist: calculateDistanceKmServer(loc.lat, loc.lon, p.latitude, p.longitude),
+      }))
+      .sort((a, b) => a.dist - b.dist)
+      .slice(0, 6)
+      .map((x) => x.place);
+  }
+
+  if (candidatePlaces.length === 0) {
+    candidatePlaces = db.places.filter((p) => p.isFeatured).slice(0, 5);
+  }
+
+  const matchingRoutes = ROUTES.filter(
+    (r) =>
+      r.regionName.toLowerCase().includes(lower) ||
+      r.title.toLowerCase().includes(lower) ||
+      r.stops.some((s) => candidatePlaces.some((cp) => cp.id === s.placeId))
+  );
+
+  const lines: string[] = [
+    `Препоръки за ${days}-дневен маршрут (${regionOrPlaces}):`,
+  ];
+
+  if (matchingRoutes.length > 0) {
+    lines.push('Готови маршрути в раздела „Маршрути“ на сайта:');
+    for (const r of matchingRoutes.slice(0, 3)) {
+      lines.push(
+        `- ${r.title} (${r.regionName}, ${r.duration}, ${r.totalDistance}, трудност: ${r.difficulty}): спирки ${r.stops
+          .map((s) => s.placeName)
+          .join(' -> ')}`
+      );
+    }
+  }
+
+  lines.push('Спирки от каталога с реални координати и съвети:');
+  const chosen = candidatePlaces.slice(0, 6);
+  for (let i = 0; i < chosen.length; i++) {
+    const p = chosen[i];
+    const next = chosen[i + 1];
+    const distStr = next
+      ? ` (разстояние до ${next.name}: ~${calculateDistanceKmServer(
+          p.latitude,
+          p.longitude,
+          next.latitude,
+          next.longitude
+        )} км по права линия)`
+      : '';
+    lines.push(
+      `- ${p.name} [${p.latitude.toFixed(4)}, ${p.longitude.toFixed(4)}], Трудност: ${p.difficulty}, Сезон: ${p.bestSeason}. ${p.accessTips}${distStr}`
+    );
+  }
+
+  return {
+    summary: lines.join('\n'),
+    sources: [],
+    queries: [`маршрут ${regionOrPlaces} ${days} дни`],
+    matchedPlaceIds: chosen.map((p) => p.id),
+  };
+}
+
+const weatherToolDecl: FunctionDeclaration = {
+  name: 'checkWeatherForecast',
+  description:
+    'Проверява реалната прогноза за времето за днес, утре и следващите 5-7 дни за даден град, курорт, планина или забележителност в България (температури, вероятност за дъжд, вятър, облачност, предупреждения и Sinoptik.bg връзка).',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      location: {
+        type: Type.STRING,
+        description: 'Име на град, село, планински връх или забележителност в България (напр. Банско, Белинташ, връх Ботев).',
+      },
+    },
+    required: ['location'],
+  },
+};
+
+const hotelToolDecl: FunctionDeclaration = {
+  name: 'searchHotelsAndBooking',
+  description:
+    'Търси реални хотели, къщи за гости, ценови оферти и Booking.com линкове около дестинация в България.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      destination: {
+        type: Type.STRING,
+        description: 'Дестинация, град или забележителност в България (напр. Банско, Триград, Родопи).',
+      },
+      budget: {
+        type: Type.STRING,
+        description: 'Бюджет или тип настаняване по желание (напр. бюджетен, семеен, СПА).',
+      },
+    },
+    required: ['destination'],
+  },
+};
+
+const placesDiningToolDecl: FunctionDeclaration = {
+  name: 'searchPlacesAndRestaurants',
+  description:
+    'Търси забележителности от каталога на сайта, ресторанти, работно време и цени на билети за дадена дестинация.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      topic: {
+        type: Type.STRING,
+        description: 'Място, град, ресторант или забележителност за проверка.',
+      },
+    },
+    required: ['topic'],
+  },
+};
+
+const routePlannerToolDecl: FunctionDeclaration = {
+  name: 'planBulgariaRoute',
+  description:
+    'Подбира последователни спирки от каталога на сайта и готови маршрути с разстояния и координати за пътуване в България.',
+  parameters: {
+    type: Type.OBJECT,
+    properties: {
+      regionOrPlaces: {
+        type: Type.STRING,
+        description: 'Регион или желани обекти/градове в България.',
+      },
+      days: {
+        type: Type.NUMBER,
+        description: 'Брой дни за пътуването (напр. 1, 2, 3).',
+      },
+    },
+    required: ['regionOrPlaces'],
+  },
+};
+
+async function dispatchGuideToolCall(
+  name: string,
+  args: Record<string, any>,
+  options: { includeLinks: boolean }
+): Promise<ToolExecutionResult> {
+  if (name === 'checkWeatherForecast') {
+    return executeWeatherForecastTool(String(args?.location || 'София'));
+  }
+  if (name === 'searchHotelsAndBooking') {
+    return executeHotelSearchTool(
+      String(args?.destination || 'България'),
+      args?.budget ? String(args.budget) : undefined,
+      options.includeLinks
+    );
+  }
+  if (name === 'searchPlacesAndRestaurants') {
+    return executePlacesAndDiningTool(String(args?.topic || 'България'));
+  }
+  if (name === 'planBulgariaRoute') {
+    return executeRoutePlannerTool(
+      String(args?.regionOrPlaces || 'Родопи'),
+      Number.isFinite(Number(args?.days)) ? Number(args.days) : 2
+    );
+  }
+  return {
+    summary: 'Непозната заявка към инструмент.',
+    sources: [],
+    queries: [],
+    matchedPlaceIds: [],
+  };
+}
 
 async function performLiveWebSearch(
   userQuery: string,
-  catalogPlaces: Place[]
+  _catalogPlaces: Place[],
+  options: { includeLinks: boolean; fallbackContextText?: string } = { includeLinks: false }
 ): Promise<{
   sources: { title: string; uri: string }[];
   queries: string[];
   contextSummary: string;
+  matchedPlaceIds: string[];
 }> {
   const sources: { title: string; uri: string }[] = [];
   const contextLines: string[] = [];
+  const queries: string[] = [];
+  const matchedPlaceIds: string[] = [];
   const lowerQ = userQuery.toLowerCase();
 
-  const stopWords = new Set([
-    'каква', 'какво', 'какъв', 'как', 'кой', 'коя', 'кое', 'кои', 'къде', 'кога',
-    'е', 'са', 'има', 'ли', 'в', 'на', 'до', 'за', 'с', 'от', 'по', 'и', 'или',
-    'днес', 'сега', 'утре', 'моля', 'кажи', 'ми', 'провери', 'актуална', 'информация',
-    'прогнозата', 'препоръчай', 'подходящи', 'най', 'много', 'около', 'района',
-  ]);
-
-  const rawWords = userQuery
-    .replace(/[?!.,:;"'()[\]]/g, ' ')
-    .split(/\s+/)
-    .map((w) => w.trim())
-    .filter((w) => w.length >= 2);
-
-  const meaningfulKeywords = rawWords.filter((w) => !stopWords.has(w.toLowerCase()));
-  const searchQuery = (meaningfulKeywords.slice(0, 6).join(' ') || userQuery.slice(0, 80)).trim();
-  const queries: string[] = [searchQuery];
-
   const isWeatherQuery =
-    /(врем|прогноз|температур|градус|сняг|снеж|дъжд|вятър|буря|мъгла|слънц|услови|проходим)/i.test(lowerQ);
+    /(врем|прогноз|температур|градус|сняг|снеж|дъжд|вятър|буря|мъгла|слънц|облач|синоптик|sinoptik)/i.test(
+      lowerQ
+    );
   const isHotelOrPriceQuery =
-    /(хотел|къщ|нощувк|настаняв|хиж|цена|цени|билет|такса|ресторант|престой|booking|евтин|лукс)/i.test(lowerQ);
-
-  const weatherLocations: { name: string; lat: number; lon: number }[] = [];
-  for (const p of catalogPlaces) {
-    const firstPart = p.name.toLowerCase().split('(')[0].trim();
-    const coreTokens = firstPart.split(/\s+/).filter((w) => w.length >= 5 && !['пещера', 'водопад', 'крепост', 'скално', 'светилище', 'манастир', 'езеро', 'резерват'].includes(w));
-    if (
-      lowerQ.includes(firstPart) ||
-      coreTokens.some((tok) => lowerQ.includes(tok) || (tok.length > 6 && lowerQ.includes(tok.slice(0, 6))))
-    ) {
-      if (!weatherLocations.some((wl) => wl.name === p.name)) {
-        weatherLocations.push({ name: p.name, lat: p.latitude, lon: p.longitude });
-      }
-    }
-  }
-  for (const peak of KNOWN_BG_PEAKS) {
-    if (peak.keys.some((k) => lowerQ.includes(k))) {
-      if (!weatherLocations.some((wl) => wl.name === peak.name)) {
-        weatherLocations.push({ name: peak.name, lat: peak.lat, lon: peak.lon });
-      }
-    }
-  }
+    /(хотел|къщ|нощувк|настаняв|хиж|цена|цени|booking|букинг|евтин|лукс|спа|резервац)/i.test(lowerQ) ||
+    (options.includeLinks && isHotelTopicQuery(options.fallbackContextText || ''));
+  const isRouteQuery = /(маршрут|обиколк|уикенд|дни|план|пътуване|експедиц)/i.test(lowerQ);
 
   const tasks: Promise<void>[] = [];
 
-  // Live Web Search via Bing RSS for hotels, prices, tickets, and current conditions
-  tasks.push(
-    (async () => {
-      try {
-        const hotelTokens = meaningfulKeywords.filter(
-          (w) => !/(врем|прогноз|температур|градус|сняг|дъжд|вятър|google|провери)/i.test(w)
-        );
-        const webQ = isHotelOrPriceQuery
-          ? `${hotelTokens.slice(0, 4).join(' ') || searchQuery} цени`
-          : isWeatherQuery
-          ? `${searchQuery} прогноза`
-          : searchQuery;
-        const bingUrl = `https://www.bing.com/search?q=${encodeURIComponent(webQ)}&format=rss&cc=BG&setlang=bg`;
-        const r = await fetch(bingUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HiddenBulgariaGuide/1.0)' },
-          signal: AbortSignal.timeout(4500),
-        });
-        if (!r.ok) return;
-        const xml = await r.text();
-        const items = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
-        let added = 0;
-        for (const item of items) {
-          if (added >= 5) break;
-          const titleMatch = item.match(/<title>([\s\S]*?)<\/title>/);
-          const linkMatch = item.match(/<link>([\s\S]*?)<\/link>/);
-          const descMatch = item.match(/<description>([\s\S]*?)<\/description>/);
-          const title = titleMatch ? decodeXmlEntities(titleMatch[1]) : '';
-          const uri = linkMatch ? sanitizeExternalUrl(decodeXmlEntities(linkMatch[1])) : null;
-          const snippet = descMatch ? decodeXmlEntities(descMatch[1]) : '';
-          if (title && uri) {
-            sources.push({ title: cleanText(title, 110), uri });
-            contextLines.push(`[Уеб резултат] ${title}: ${snippet} (${uri})`);
-            added++;
-          }
-        }
-        queries.push(webQ);
-      } catch {
-        // ignore search timeout
-      }
-    })()
-  );
-
-  // Real local accommodations lookup via OpenStreetMap Nominatim when user asks about hotels/stays/prices
-  if (isHotelOrPriceQuery) {
-    const nonHotelTokens = meaningfulKeywords.filter(
-      (w) => !/(хотел|хотели|къщ|нощувк|цени|цена|провери|google|около|врем|прогноз|днес|утре|билет)/i.test(w)
-    );
-    const placeHint = nonHotelTokens.slice(0, 2).join(' ') || weatherLocations[0]?.name.split('(')[0].trim() || '';
-    if (placeHint.length >= 3) {
-      tasks.push(
-        (async () => {
-          try {
-            const nomUrl = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(
-              `хотел ${placeHint} България`
-            )}&format=jsonv2&limit=5&addressdetails=1&extratags=1`;
-            const r = await fetch(nomUrl, {
-              headers: { 'User-Agent': 'HiddenBulgariaAtlas/1.0' },
-              signal: AbortSignal.timeout(4000),
-            });
-            if (!r.ok) return;
-            const list: any[] = await r.json();
-            if (Array.isArray(list) && list.length > 0) {
-              const lines = list.slice(0, 5).map((item) => {
-                const n = item.name || item.display_name?.split(',')[0] || 'Настаняване';
-                const web = sanitizeExternalUrl(item.extratags?.website || item.extratags?.url);
-                const tel = item.extratags?.phone || item.extratags?.['contact:phone'] || '';
-                if (web) {
-                  sources.push({ title: `${n} (Официален сайт)`, uri: web });
-                }
-                return `- ${n}${tel ? ` (тел: ${tel})` : ''}${web ? ` — ${web}` : ''}`;
-              });
-              contextLines.push(`[Реални места за настаняване около ${placeHint} от OpenStreetMap]:\n${lines.join('\n')}`);
-            }
-          } catch {
-            // ignore nominatim timeout
-          }
-        })()
-      );
-    }
-  }
-
   if (isWeatherQuery) {
-    if (weatherLocations.length === 0 && meaningfulKeywords.length > 0) {
-      try {
-        const geoUrl = `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(
-          meaningfulKeywords.slice(0, 2).join(' ')
-        )}&count=3&language=bg&format=json`;
-        const r = await fetch(geoUrl, { signal: AbortSignal.timeout(3500) });
-        if (r.ok) {
-          const g: any = await r.json();
-          const bgMatch = g?.results?.find((item: any) => item.country_code === 'BG') || g?.results?.[0];
-          if (bgMatch) {
-            weatherLocations.push({ name: bgMatch.name, lat: bgMatch.latitude, lon: bgMatch.longitude });
-          }
-        }
-      } catch {
-        // ignore geocode timeout
-      }
-    }
-
-    for (const loc of weatherLocations.slice(0, 2)) {
-      tasks.push(
-        (async () => {
-          try {
-            const meteoUrl = `https://api.open-meteo.com/v1/forecast?latitude=${loc.lat}&longitude=${loc.lon}&current=temperature_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&timezone=Europe%2FSofia&forecast_days=3`;
-            const r = await fetch(meteoUrl, { signal: AbortSignal.timeout(4000) });
-            if (!r.ok) return;
-            const data: any = await r.json();
-            const cur = data?.current;
-            const daily = data?.daily;
-            if (cur) {
-              const cond = describeWmoCodeBg(Number(cur.weather_code ?? 0));
-              let forecastTxt = '';
-              if (daily && Array.isArray(daily.time)) {
-                forecastTxt = daily.time
-                  .slice(0, 3)
-                  .map(
-                    (d: string, i: number) =>
-                      `${d}: ${daily.temperature_2m_min?.[i]}°C..${daily.temperature_2m_max?.[i]}°C, валежи ${daily.precipitation_sum?.[i]}мм (${describeWmoCodeBg(
-                        Number(daily.weather_code?.[i] ?? 0)
-                      )})`
-                  )
-                  .join(' | ');
-              }
-              contextLines.push(
-                `[Актуална метео прогноза за ${loc.name} (${loc.lat.toFixed(3)}, ${loc.lon.toFixed(3)})]: Сега ${cur.temperature_2m}°C (усеща се като ${cur.apparent_temperature}°C), ${cond}, вятър ${cur.wind_speed_10m} km/h, валежи ${cur.precipitation} мм. 3-дневна прогноза: ${forecastTxt}`
-              );
-              sources.push({
-                title: `Open-Meteo Прогноза: ${loc.name}`,
-                uri: 'https://open-meteo.com/en/docs',
-              });
-              queries.push(`прогноза времето ${loc.name}`);
-            }
-          } catch {
-            // ignore weather timeout
-          }
-        })()
-      );
-    }
-  }
-
-  tasks.push(
-    (async () => {
-      try {
-        const rssUrl = `https://news.google.com/rss/search?q=${encodeURIComponent(
-          searchQuery
-        )}&hl=bg&gl=BG&ceid=BG:bg`;
-        const r = await fetch(rssUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; HiddenBulgariaGuide/1.0)' },
-          signal: AbortSignal.timeout(4000),
-        });
-        if (!r.ok) return;
-        const xml = await r.text();
-        const items = xml.match(/<item>[\s\S]*?<\/item>/g) || [];
-        const parsed: WebSearchResult[] = [];
-        for (const item of items.slice(0, 4)) {
-          const titleMatch = item.match(/<title>([\s\S]*?)<\/title>/);
-          const linkMatch = item.match(/<link>([\s\S]*?)<\/link>/);
-          const dateMatch = item.match(/<pubDate>([\s\S]*?)<\/pubDate>/);
-          const title = titleMatch ? decodeXmlEntities(titleMatch[1]) : '';
-          const uri = linkMatch ? sanitizeExternalUrl(decodeXmlEntities(linkMatch[1])) : null;
-          const pubDate = dateMatch ? decodeXmlEntities(dateMatch[1]) : '';
-          if (title && uri) {
-            parsed.push({ title, uri, snippet: pubDate });
-          }
-        }
-        for (const p of parsed.slice(0, 3)) {
-          sources.push({ title: p.title, uri: p.uri });
-          contextLines.push(`[Новини] ${p.title} (${p.snippet}) — ${p.uri}`);
-        }
-      } catch {
-        // ignore RSS error
-      }
-    })()
-  );
-
-  const wikiSearchTerm =
-    weatherLocations[0]?.name.split('(')[0].trim() || meaningfulKeywords.slice(0, 3).join(' ');
-  if (wikiSearchTerm.length >= 3) {
     tasks.push(
       (async () => {
-        try {
-          const wikiUrl = `https://bg.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(
-            wikiSearchTerm
-          )}&srlimit=2&format=json&utf8=1`;
-          const r = await fetch(wikiUrl, {
-            headers: { 'User-Agent': 'HiddenBulgariaGuide/1.0' },
-            signal: AbortSignal.timeout(3500),
-          });
-          if (!r.ok) return;
-          const data: any = await r.json();
-          const hits = data?.query?.search || [];
-          for (const hit of hits.slice(0, 2)) {
-            const title = String(hit.title || '');
-            const snippet = decodeXmlEntities(String(hit.snippet || ''));
-            const uri = `https://bg.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, '_'))}`;
-            if (title && snippet) {
-              sources.push({ title: `${title} — Уикипедия`, uri });
-              contextLines.push(`[Българска Уикипедия: ${title}] ${snippet}`);
-            }
-          }
-        } catch {
-          // ignore wiki error
-        }
+        const res = await executeWeatherForecastTool(userQuery);
+        contextLines.push(res.summary);
+        sources.push(...res.sources);
+        queries.push(...res.queries);
+        matchedPlaceIds.push(...res.matchedPlaceIds);
+      })()
+    );
+  }
+
+  if (isHotelOrPriceQuery) {
+    tasks.push(
+      (async () => {
+        const destinationQuery =
+          options.fallbackContextText &&
+          /(тези|тях|горните|предишните|изброените)/i.test(lowerQ)
+            ? `${userQuery} ${options.fallbackContextText.slice(0, 180)}`
+            : userQuery;
+        const res = await executeHotelSearchTool(destinationQuery, undefined, options.includeLinks);
+        contextLines.push(res.summary);
+        sources.push(...res.sources);
+        queries.push(...res.queries);
+        matchedPlaceIds.push(...res.matchedPlaceIds);
+      })()
+    );
+  }
+
+  if (isRouteQuery) {
+    tasks.push(
+      (async () => {
+        const res = await executeRoutePlannerTool(userQuery, 2);
+        contextLines.push(res.summary);
+        sources.push(...res.sources);
+        queries.push(...res.queries);
+        matchedPlaceIds.push(...res.matchedPlaceIds);
+      })()
+    );
+  }
+
+  if (!isWeatherQuery && !isHotelOrPriceQuery) {
+    tasks.push(
+      (async () => {
+        const res = await executePlacesAndDiningTool(userQuery);
+        contextLines.push(res.summary);
+        sources.push(...res.sources);
+        queries.push(...res.queries);
+        matchedPlaceIds.push(...res.matchedPlaceIds);
       })()
     );
   }
@@ -2155,9 +2778,10 @@ async function performLiveWebSearch(
   }
 
   return {
-    sources: uniqueSources.slice(0, 6),
-    queries: Array.from(new Set(queries)).slice(0, 3),
-    contextSummary: contextLines.join('\n'),
+    sources: uniqueSources.slice(0, 8),
+    queries: Array.from(new Set(queries)).slice(0, 4),
+    contextSummary: contextLines.join('\n\n'),
+    matchedPlaceIds: Array.from(new Set(matchedPlaceIds)),
   };
 }
 
@@ -2220,20 +2844,31 @@ async function handleGuideChat(req: Request, res: Response) {
       )
       .join('\n');
 
-    const baseSystemInstruction = `Ти си „Пътеводителят“ на платформата „Скрито в България“ — опитен краевед, туристически консултант и планински водач с достъп до картографския архив на ${db.places.length} верифицирани обекта в България и търсене в Google в реално време.
+    const wantsLinks = userExplicitlyRequestedLinks(cleanMsg);
+    const hotelQueryDetected = isHotelTopicQuery(cleanMsg);
+    let hotelToolUsed = false;
+
+    const hotelLinkRule = wantsLinks
+      ? 'ПОТРЕБИТЕЛЯТ ПОИСКА ЛИНКОВЕ: Включи директни, кликаеми https://... линкове към хотелите/местата и Booking.com на ясни нови редове (напр. Име на хотел: https://...), без Markdown удебеляване (**), така че потребителят да може да ги отвори веднага.'
+      : 'ПРАВИЛО ЗА ХОТЕЛИ БЕЗ ЛИНКОВЕ (МНОГО ВАЖНО): Потребителят НЕ е поискал линкове! За въпроси за хотели и настаняване изброявай САМО реалните имена на хотелите/къщите за гости, района/особеностите и проверените цени (ако има налични). СТРОГО ЗАБРАНЕНО Е да включваш URL адреси, уеб линкове (http/https) или Markdown линкове в отговора си! В края добави едно кратко изречение, че при желание можеш веднага да изпратиш директни линкове към тези хотели или Booking.com.';
+
+    const baseSystemInstruction = `Ти си „Пътеводителят“ на платформата „Скрито в България“ — интелигентен краевед, туристически консултант и планински водач с достъп до ${db.places.length} верифицирани обекта в България, Google Търсене и специализирани инструменти в реално време.
 
 ТЕКУЩА ДАТА И ЧАС В БЪЛГАРИЯ: ${nowBg}
 
-ТВОИТЕ ПРАВИЛА И СТИЛ:
-1. ЗАДЪЛЖИТЕЛНО ТЪРСЕНЕ В GOOGLE (ЦЕНИ, ХОТЕЛИ, ПРОГНОЗА ЗА ВРЕМЕТО):
-   - Когато потребителят пита за хотели, къщи за гости, цени за нощувки, входни такси/билети, ресторанти, транспорт, актуална прогноза за времето, сняг или пътна обстановка в България — ВИНАГИ използвай инструмента за търсене в Google, за да провериш реални актуални цени, налични места за настаняване, оценки и прогнози.
-   - Посочвай конкретни примери с ориентировъчни цени (в BGN/EUR, както са в актуалните източници), метеорологични стойности (температури, валежи, вятър) и предупреждения за безопасност. Никога не измисляй цени или дати, ако липсват в резултатите от търсенето — кажи ясно какво показват актуалните източници.
-2. ВИЗУАЛНО РАЗПОЗНАВАНЕ НА СНИМКИ:
-   - Когато потребителят качи или заснеме кадър на природна забележителност, скала, пещера, водопад или историческа крепост в България, анализирай формите и го съпостави с каталога или географските характеристики, като обясниш локацията и практическите съвети за достъп.
-3. БЕЗОПАСНОСТ И СПЕШНИ НОМЕРА:
-   - При планински преходи и лошо време напомняй за спешните телефони в България: Единен спешен номер 112 и Планинска спасителна служба (ПСС): 1470 / +359 2 963 2000.
-4. ЕСТЕСТВЕН ТОПЪЛ ДИАЛОГ И КРАЕВЕДСКИ СЪВЕТИ:
-   - Отговаряй приветливо на чист, богат български език с кратки абзаци и ясни препоръки от каталога.
+ПРАВИЛА ЗА ИНСТРУМЕНТИТЕ И ТОЧНОСТТА:
+1. АВТОМАТИЧЕН ИЗБОР НА ИНСТРУМЕНТИ:
+   - За въпрос за времето / прогнозата (днес, утре, следващите 5-7 дни): задължително извикай checkWeatherForecast и посочи минимални/максимални температури, вероятност за дъжд, количество валежи, вятър, облачност и предупреждения, ако има такива.
+   - За въпрос за хотели, нощувки, цени или Booking.com: задължително извикай searchHotelsAndBooking (и Google Search при нужда). Предлагай реални места за настаняване според бюджета/предпочитанията, сравнявай цени само ако са намерени в реалните резултати. НИКОГА не измисляй цени! ${hotelLinkRule}
+   - За въпрос за ресторанти, забележителности, работно време или входни билети: извикай searchPlacesAndRestaurants и Google Search.
+   - За планиране на маршрути и екскурзии: извикай planBulgariaRoute и свържи препоръките с обектите от каталога.
+2. ФОРМАТИРАНЕ НА ОТГОВОРИТЕ (СТРОГО ЗАДЪЛЖИТЕЛНО):
+   - Пиши на естествен, ясен и подреден български език с кратки абзаци и тирета (-) или точки (•) за списъци.
+   - НИКОГА не използвай Markdown символи за удебеляване (** или __) и НИКОГА не използвай символи # / ## / ### за заглавия! Вместо това използвай чист текст, главни букви за кратки секции при нужда, и нови редове.
+3. ВИЗУАЛНО РАЗПОЗНАВАНЕ НА СНИМКИ:
+   - При качена или заснета снимка разпознай обекта или района в България и дай практически насоки за достъп.
+4. БЕЗОПАСНОСТ:
+   - При планински преходи или неблагоприятно време напомняй спешните номера: 112 (Спешна помощ) и ПСС 1470 / +359 2 963 2000.
 
 НАЛИЧЕН КАТАЛОГ С МЕСТА НА САЙТА:
 ${catalogContext}`;
@@ -2248,11 +2883,9 @@ ${catalogContext}`;
           turn.text.trim()
         ) {
           const text = turn.text.trim().slice(0, 2000);
-          // Skip leading model welcome messages so conversation history always begins with 'user'
           if (rawTurns.length === 0 && turn.role === 'model') {
             continue;
           }
-          // Merge or replace consecutive turns with the same role to satisfy strict alternation
           const last = rawTurns[rawTurns.length - 1];
           if (last && last.role === turn.role) {
             last.text = `${last.text}\n${text}`.slice(0, 2000);
@@ -2262,7 +2895,6 @@ ${catalogContext}`;
         }
       }
     }
-    // Ensure history before the new 'user' turn ends with a 'model' turn (never two trailing 'user' turns)
     if (rawTurns.length > 0 && rawTurns[rawTurns.length - 1].role === 'user') {
       rawTurns.pop();
     }
@@ -2287,7 +2919,7 @@ ${catalogContext}`;
         });
       }
       const combinedText = extraWebContext
-        ? `${userPromptText}\n\n[АКТУАЛНИ РЕЗУЛТАТИ И ДАННИ В РЕАЛНО ВРЕМЕ (${nowBg})]:\n${extraWebContext}`
+        ? `${userPromptText}\n\n[АКТУАЛНИ ДАННИ В РЕАЛНО ВРЕМЕ (${nowBg})]:\n${extraWebContext}`
         : userPromptText;
       userParts.push({ text: combinedText });
       return [...baseHistory, { role: 'user', parts: userParts }];
@@ -2304,10 +2936,14 @@ ${catalogContext}`;
     let lastErrorStatus = 502;
     let lastErrorMessage = 'Временна грешка при връзка с услугата на Пътеводителя.';
     let authFatalError = false;
+    const collectedToolSources: { title: string; uri: string }[] = [];
+    const collectedToolQueries: string[] = [];
+    const collectedToolPlaceIds: string[] = [];
     let usedLiveWebFallback: {
       sources: { title: string; uri: string }[];
       queries: string[];
       contextSummary: string;
+      matchedPlaceIds: string[];
     } | null = null;
 
     const classifyError = (
@@ -2364,27 +3000,93 @@ ${catalogContext}`;
     const attemptLogs: string[] = [];
 
     if (!hasImage) {
+      const hybridTools = [
+        { googleSearch: {} },
+        {
+          functionDeclarations: [
+            weatherToolDecl,
+            hotelToolDecl,
+            placesDiningToolDecl,
+            routePlannerToolDecl,
+          ],
+        },
+      ];
+      const hybridToolConfig = { includeServerSideToolInvocations: true };
+
       try {
-        const r = await aiClient.models.generateContent({
+        let conversationContents = buildContents();
+        let currentResp = await aiClient.models.generateContent({
           model: modelTiers[0].id,
-          contents: buildContents(),
+          contents: conversationContents,
           config: {
             systemInstruction: baseSystemInstruction,
-            tools: [{ googleSearch: {} }],
+            tools: hybridTools,
+            toolConfig: hybridToolConfig,
             thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-            abortSignal: AbortSignal.timeout(12000),
+            abortSignal: AbortSignal.timeout(15000),
           },
         });
 
-        if (r && (r.text || r.candidates?.[0]?.content)) {
-          response = r;
+        for (let round = 0; round < 3; round++) {
+          const functionCalls = currentResp.functionCalls;
+          if (!functionCalls || functionCalls.length === 0) {
+            break;
+          }
+          const previousContent = currentResp.candidates?.[0]?.content;
+          if (!previousContent) break;
+
+          const executedParts = await Promise.all(
+            functionCalls.map(async (fc) => {
+              if (fc.name === 'searchHotelsAndBooking') {
+                hotelToolUsed = true;
+              }
+              const toolRes = await dispatchGuideToolCall(
+                fc.name || '',
+                (fc.args as Record<string, any>) || {},
+                { includeLinks: wantsLinks }
+              );
+              collectedToolSources.push(...toolRes.sources);
+              collectedToolQueries.push(...toolRes.queries);
+              collectedToolPlaceIds.push(...toolRes.matchedPlaceIds);
+              return {
+                functionResponse: {
+                  id: fc.id,
+                  name: fc.name || '',
+                  response: { result: toolRes.summary },
+                },
+              };
+            })
+          );
+
+          conversationContents = [
+            ...conversationContents,
+            previousContent,
+            { role: 'user', parts: executedParts },
+          ];
+
+          currentResp = await aiClient.models.generateContent({
+            model: modelTiers[0].id,
+            contents: conversationContents,
+            config: {
+              systemInstruction: baseSystemInstruction,
+              tools: hybridTools,
+              toolConfig: hybridToolConfig,
+              thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+              abortSignal: AbortSignal.timeout(15000),
+            },
+          });
+        }
+
+        const candidateText = (currentResp?.text || '').trim();
+        if (currentResp && candidateText.length > 0) {
+          response = currentResp;
           successfulModelName = modelTiers[0].name;
         }
       } catch (attemptErr: any) {
         const errMsg = String(attemptErr?.message || attemptErr || '');
         const info = classifyError(errMsg, modelTiers[0].id);
-        attemptLogs.push(`search:${info.reason}`);
-        console.warn('[Guide googleSearch attempt failed]', modelTiers[0].id, errMsg.slice(0, 240));
+        attemptLogs.push(`hybrid:${info.reason}`);
+        console.warn('[Guide hybrid tool attempt failed]', modelTiers[0].id, errMsg.slice(0, 240));
         lastErrorStatus = info.status;
         lastErrorMessage = info.userMsg;
         if (info.fatalAuth) {
@@ -2395,15 +3097,22 @@ ${catalogContext}`;
 
     if (!response && !authFatalError) {
       if (!hasImage) {
-        usedLiveWebFallback = await performLiveWebSearch(userPromptText, db.places);
+        const recentHistorySnippet = rawTurns
+          .slice(-2)
+          .map((t) => t.text)
+          .join(' ');
+        usedLiveWebFallback = await performLiveWebSearch(userPromptText, db.places, {
+          includeLinks: wantsLinks,
+          fallbackContextText: recentHistorySnippet,
+        });
       }
 
       const directContents = buildContents(usedLiveWebFallback?.contextSummary || undefined);
 
       const directAttempts = [
-        { ...modelTiers[0], timeoutMs: 12000, waitBeforeMs: 0 },
-        { ...modelTiers[1], timeoutMs: 12000, waitBeforeMs: 450 },
-        { ...modelTiers[1], timeoutMs: 14000, waitBeforeMs: 1100 },
+        { ...modelTiers[0], timeoutMs: 13000, waitBeforeMs: 0 },
+        { ...modelTiers[1], timeoutMs: 13000, waitBeforeMs: 450 },
+        { ...modelTiers[1], timeoutMs: 15000, waitBeforeMs: 1100 },
       ];
 
       for (const attempt of directAttempts) {
@@ -2423,7 +3132,7 @@ ${catalogContext}`;
             },
           });
 
-          if (r && (r.text || r.candidates?.[0]?.content)) {
+          if (r && (r.text || '').trim().length > 0) {
             response = r;
             successfulModelName = attempt.name;
             break;
@@ -2442,19 +3151,26 @@ ${catalogContext}`;
       }
     }
 
-    if (!response || (!response.text && !response.candidates?.[0]?.content)) {
+    const rawReplyText = (response?.text || '').trim();
+    if (!response || !rawReplyText) {
       console.error('[Guide chat failed all tiers]', attemptLogs.join(' | '));
       return res.status(lastErrorStatus).json({ error: lastErrorMessage });
     }
 
-    const replyText = response.text || '';
+    let replyText = stripMarkdownFormatting(rawReplyText);
+    if (!wantsLinks && (hotelQueryDetected || hotelToolUsed)) {
+      replyText = stripUrlsFromText(replyText);
+    }
 
-    const suggestedPlaceIds: string[] = [];
+    const suggestedPlaceIds: string[] = [...collectedToolPlaceIds];
+    if (usedLiveWebFallback?.matchedPlaceIds?.length) {
+      suggestedPlaceIds.push(...usedLiveWebFallback.matchedPlaceIds);
+    }
     for (const place of db.places) {
       if (
-        replyText.toLowerCase().includes(place.name.toLowerCase()) ||
-        replyText.includes(`[ID: ${place.id}]`) ||
-        replyText.includes(place.id)
+        rawReplyText.toLowerCase().includes(place.name.toLowerCase()) ||
+        rawReplyText.includes(`[ID: ${place.id}]`) ||
+        rawReplyText.includes(place.id)
       ) {
         suggestedPlaceIds.push(place.id);
       }
@@ -2462,33 +3178,55 @@ ${catalogContext}`;
 
     const candidate = response.candidates?.[0];
     const groundingChunks = (candidate as any)?.groundingMetadata?.groundingChunks;
-    const webSources: { title: string; uri: string }[] = [];
+    const rawSources: { title: string; uri: string }[] = [];
     if (Array.isArray(groundingChunks)) {
       for (const chunk of groundingChunks) {
         const safeUri = sanitizeExternalUrl(chunk.web?.uri);
         if (safeUri) {
-          webSources.push({
+          rawSources.push({
             title: cleanText(chunk.web?.title || 'Уеб източник', 120),
             uri: safeUri,
           });
         }
       }
     }
+    rawSources.push(...collectedToolSources);
+    if (usedLiveWebFallback?.sources?.length) {
+      rawSources.push(...usedLiveWebFallback.sources);
+    }
 
-    if (webSources.length === 0 && usedLiveWebFallback?.sources?.length) {
-      webSources.push(...usedLiveWebFallback.sources);
+    const webSources: { title: string; uri: string }[] = [];
+    const seenUris = new Set<string>();
+    const suppressHotelSources = !wantsLinks && (hotelQueryDetected || hotelToolUsed);
+    for (const s of rawSources) {
+      const safe = sanitizeExternalUrl(s.uri);
+      if (!safe || seenUris.has(safe)) continue;
+      if (suppressHotelSources) {
+        const isBookingOrHotelLink =
+          /booking\.com|hotels\.com|tripadvisor|pochivka\.bg|bgturist|hotel|хотел/i.test(
+            `${safe} ${s.title}`
+          );
+        if (isBookingOrHotelLink) continue;
+      }
+      seenUris.add(safe);
+      webSources.push({ title: s.title, uri: safe });
     }
 
     const nativeQueries: string[] = (candidate as any)?.groundingMetadata?.webSearchQueries || [];
-    const searchQueries: string[] =
-      nativeQueries.length > 0 ? nativeQueries : usedLiveWebFallback?.queries || [];
+    const searchQueries: string[] = Array.from(
+      new Set([
+        ...nativeQueries,
+        ...collectedToolQueries,
+        ...(usedLiveWebFallback?.queries || []),
+      ])
+    ).slice(0, 4);
 
     return res.json({
-      reply: replyText.replace(/\[ID:\s*[^\]]+\]/g, '').trim(),
+      reply: replyText,
       modelUsed: successfulModelName,
       fallbackReason: fallbackNotice,
       suggestedPlaceIds: Array.from(new Set(suggestedPlaceIds)).slice(0, 4),
-      webSources: webSources.slice(0, 6),
+      webSources: webSources.slice(0, 8),
       searchQueries,
     });
   } catch (error: any) {
@@ -2499,8 +3237,8 @@ ${catalogContext}`;
   }
 }
 
-app.post('/api/guide/chat', aiRateLimiter, handleGuideChat);
-app.post('/api/ai/chat', aiRateLimiter, handleGuideChat);
+app.post('/api/guide/chat', requireAuth, aiRateLimiter, handleGuideChat);
+app.post('/api/ai/chat', requireAuth, aiRateLimiter, handleGuideChat);
 
 // Unmatched API routes return structured JSON 404
 app.use('/api/*', (_req: Request, res: Response) => {

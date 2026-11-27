@@ -14,6 +14,8 @@ import {
   deletePlace,
   fetchAdminStatus,
   claimAdminAccount,
+  updateUserStatus,
+  deleteUserAccount,
 } from '../services/api';
 import { handleImageError } from '../utils/imageFallback';
 import {
@@ -35,6 +37,11 @@ import {
   Mail,
   User as UserIcon,
   KeyRound,
+  Ban,
+  UserCheck,
+  UserPlus,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 interface AdminPanelProps {
@@ -67,16 +74,21 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
   const [usersList, setUsersList] = useState<User[]>([]);
   const [contactMessages, setContactMessages] = useState<ContactMessage[]>([]);
   const [placeSearch, setPlaceSearch] = useState('');
+  const [userSearch, setUserSearch] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [confirmDeleteUser, setConfirmDeleteUser] = useState<User | null>(null);
+  const [busyUserId, setBusyUserId] = useState<string | null>(null);
 
   // First-run admin setup state when !isAdmin
   const [adminStatus, setAdminStatus] = useState<AdminStatus | null>(null);
   const [claimEmail, setClaimEmail] = useState('');
   const [claimPassword, setClaimPassword] = useState('');
   const [claimPasswordConfirm, setClaimPasswordConfirm] = useState('');
+  const [showClaimPassword, setShowClaimPassword] = useState(false);
+  const [showClaimPasswordConfirm, setShowClaimPasswordConfirm] = useState(false);
   const [isClaiming, setIsClaiming] = useState(false);
   const [claimError, setClaimError] = useState<string | null>(null);
 
@@ -176,6 +188,40 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
     }
   };
 
+  const handleToggleUserStatus = async (targetUser: User) => {
+    const nextStatus: 'active' | 'blocked' =
+      targetUser.status === 'blocked' ? 'active' : 'blocked';
+    setActionError(null);
+    setBusyUserId(targetUser.id);
+    try {
+      const res = await updateUserStatus(targetUser.id, nextStatus);
+      setUsersList((prev) => prev.map((u) => (u.id === targetUser.id ? res.user : u)));
+      setActionMessage(res.message);
+      setTimeout(() => setActionMessage(null), 3500);
+    } catch (err: any) {
+      setActionError(err.message || 'Грешка при промяна на статуса на потребителя.');
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
+  const handleConfirmDeleteUser = async () => {
+    if (!confirmDeleteUser) return;
+    setActionError(null);
+    setBusyUserId(confirmDeleteUser.id);
+    try {
+      const res = await deleteUserAccount(confirmDeleteUser.id);
+      setUsersList((prev) => prev.filter((u) => u.id !== confirmDeleteUser.id));
+      setConfirmDeleteUser(null);
+      setActionMessage(res.message || 'Потребителят беше изтрит успешно.');
+      setTimeout(() => setActionMessage(null), 3500);
+    } catch (err: any) {
+      setActionError(err.message || 'Грешка при изтриване на потребителя.');
+    } finally {
+      setBusyUserId(null);
+    }
+  };
+
   // Gate when user is not logged in as administrator
   if (!isAdmin) {
     const canClaim = Boolean(adminStatus && !adminStatus.adminClaimed && !adminStatus.envConfigured);
@@ -225,31 +271,53 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
                 <label className="block text-xs font-semibold text-stone-700 mb-1">
                   Нова парола (мин. 8 символа, букви и цифри)
                 </label>
-                <input
-                  type="password"
-                  required
-                  minLength={8}
-                  autoComplete="new-password"
-                  value={claimPassword}
-                  onChange={(e) => setClaimPassword(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full px-3 py-2 text-xs bg-white/80 rounded-xl border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
-                />
+                <div className="relative">
+                  <input
+                    type={showClaimPassword ? 'text' : 'password'}
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    value={claimPassword}
+                    onChange={(e) => setClaimPassword(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full pl-3 pr-10 py-2 text-xs bg-white/80 rounded-xl border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowClaimPassword((prev) => !prev)}
+                    aria-label={showClaimPassword ? 'Скрий паролата' : 'Покажи паролата'}
+                    title={showClaimPassword ? 'Скрий паролата' : 'Покажи паролата'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-stone-500 hover:text-stone-900 rounded-md transition-colors cursor-pointer"
+                  >
+                    {showClaimPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
               <div>
                 <label className="block text-xs font-semibold text-stone-700 mb-1">
                   Потвърдете паролата
                 </label>
-                <input
-                  type="password"
-                  required
-                  minLength={8}
-                  autoComplete="new-password"
-                  value={claimPasswordConfirm}
-                  onChange={(e) => setClaimPasswordConfirm(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full px-3 py-2 text-xs bg-white/80 rounded-xl border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
-                />
+                <div className="relative">
+                  <input
+                    type={showClaimPasswordConfirm ? 'text' : 'password'}
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    value={claimPasswordConfirm}
+                    onChange={(e) => setClaimPasswordConfirm(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full pl-3 pr-10 py-2 text-xs bg-white/80 rounded-xl border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowClaimPasswordConfirm((prev) => !prev)}
+                    aria-label={showClaimPasswordConfirm ? 'Скрий паролата' : 'Покажи паролата'}
+                    title={showClaimPasswordConfirm ? 'Скрий паролата' : 'Покажи паролата'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-stone-500 hover:text-stone-900 rounded-md transition-colors cursor-pointer"
+                  >
+                    {showClaimPasswordConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
               <div className="flex items-center gap-3 pt-2">
                 <button
@@ -675,52 +743,223 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           )}
 
           {/* TAB 3: Users & Roles */}
-          {activeTab === 'users' && (
-            <div className="space-y-4">
-              <div className="p-3.5 bg-[#FBF9F5] rounded-xl border border-stone-200 text-xs text-stone-800">
-                <strong>Ролева система:</strong> Платформата поддържа две роли — <strong>Администратор</strong> (пълни права за управление на обекти, предложения, запитвания и SSMS базата) и <strong>Потребител</strong> (публикуване на отзиви и запазване на списък с любими).
-              </div>
+          {activeTab === 'users' && (() => {
+            const normalizedSearch = userSearch.trim().toLowerCase();
+            const sortedUsers = [...usersList].sort(
+              (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+            );
+            const filteredUsers = sortedUsers.filter((u) => {
+              if (!normalizedSearch) return true;
+              return (
+                u.name.toLowerCase().includes(normalizedSearch) ||
+                u.email.toLowerCase().includes(normalizedSearch)
+              );
+            });
+            const totalUsers = usersList.length;
+            const activeUsersCount = usersList.filter((u) => u.status !== 'blocked').length;
+            const blockedUsersCount = usersList.filter((u) => u.status === 'blocked').length;
+            const adminUsersCount = usersList.filter((u) => u.role === 'admin').length;
+            const latestRegistrations = sortedUsers.slice(0, 4);
 
-              <div className="bg-white rounded-xl border border-stone-200 overflow-x-auto">
-                <table className="w-full text-left text-xs">
-                  <thead className="bg-[#F4EFE6] border-b border-stone-200 text-stone-700 font-semibold">
-                    <tr>
-                      <th className="p-3 sm:p-4">Потребител</th>
-                      <th className="p-3 sm:p-4">Имейл</th>
-                      <th className="p-3 sm:p-4">Роля</th>
-                      <th className="p-3 sm:p-4">Дата на регистрация</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-stone-200">
-                    {usersList.map((user) => (
-                      <tr key={user.id} className="hover:bg-stone-50">
-                        <td className="p-3 sm:p-4 font-semibold text-stone-900">{user.name}</td>
-                        <td className="p-3 sm:p-4 text-stone-600 font-mono text-[11px]">
-                          {user.email}
-                        </td>
-                        <td className="p-3 sm:p-4">
-                          {user.role === 'admin' ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-950 border border-amber-300">
-                              <ShieldCheck className="w-3 h-3 text-amber-800" />
-                              <span>Администратор</span>
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-medium bg-stone-100 text-stone-700 border border-stone-200">
-                              <UserIcon className="w-3 h-3 text-stone-600" />
-                              <span>Потребител</span>
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-3 sm:p-4 text-stone-500 text-[11px] tabular-nums">
-                          {new Date(user.createdAt).toLocaleDateString('bg-BG')}
-                        </td>
+            return (
+              <div className="space-y-4">
+                <div className="p-3.5 bg-[#FBF9F5] rounded-xl border border-stone-200 text-xs text-stone-800">
+                  <strong>Управление на потребителите:</strong> Преглеждайте регистрираните потребители, блокирайте или отблокирайте акаунти и премахвайте профили при необходимост. Администраторските профили са защитени от блокиране и изтриване.
+                </div>
+
+                {/* Stats KPI Strip */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="p-3 bg-white rounded-xl border border-stone-200">
+                    <div className="text-[11px] text-stone-500 font-medium">Общо регистрации</div>
+                    <div className="font-editorial text-2xl font-bold text-stone-950 tabular-nums mt-0.5">
+                      {totalUsers}
+                    </div>
+                  </div>
+                  <div className="p-3 bg-white rounded-xl border border-stone-200">
+                    <div className="text-[11px] text-stone-500 font-medium">Активни акаунти</div>
+                    <div className="font-editorial text-2xl font-bold text-emerald-800 tabular-nums mt-0.5">
+                      {activeUsersCount}
+                    </div>
+                  </div>
+                  <div className="p-3 bg-white rounded-xl border border-stone-200">
+                    <div className="text-[11px] text-stone-500 font-medium">Блокирани</div>
+                    <div className="font-editorial text-2xl font-bold text-rose-700 tabular-nums mt-0.5">
+                      {blockedUsersCount}
+                    </div>
+                  </div>
+                  <div className="p-3 bg-white rounded-xl border border-stone-200">
+                    <div className="text-[11px] text-stone-500 font-medium">Администратори</div>
+                    <div className="font-editorial text-2xl font-bold text-amber-800 tabular-nums mt-0.5">
+                      {adminUsersCount}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Recent Registrations Strip */}
+                {latestRegistrations.length > 0 && (
+                  <div className="p-3.5 bg-white rounded-xl border border-stone-200 space-y-2">
+                    <div className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-stone-600">
+                      <UserPlus className="w-3.5 h-3.5 text-amber-800" />
+                      <span>Последни регистрации</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+                      {latestRegistrations.map((u) => (
+                        <div
+                          key={`recent-${u.id}`}
+                          className="px-3 py-2 rounded-lg bg-[#FBF9F5] border border-stone-200/80 flex items-center justify-between gap-2 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <div className="font-semibold text-stone-900 truncate">{u.name}</div>
+                            <div className="text-[10px] text-stone-500 font-mono truncate">
+                              {new Date(u.createdAt).toLocaleDateString('bg-BG')}
+                            </div>
+                          </div>
+                          <span
+                            className={`w-2 h-2 rounded-full shrink-0 ${
+                              u.status === 'blocked' ? 'bg-rose-600' : 'bg-emerald-600'
+                            }`}
+                            title={u.status === 'blocked' ? 'Блокиран' : 'Активен'}
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* User Search Input */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="relative w-full sm:w-80">
+                    <Search className="w-4 h-4 text-stone-400 absolute left-3 top-2.5" />
+                    <input
+                      type="text"
+                      value={userSearch}
+                      onChange={(e) => setUserSearch(e.target.value)}
+                      placeholder="Търси потребител по име или имейл..."
+                      className="w-full pl-9 pr-3 py-2 text-xs bg-white rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
+                    />
+                  </div>
+                  <div className="text-xs text-stone-500 tabular-nums">
+                    Показани: <strong className="text-stone-800">{filteredUsers.length}</strong> от {totalUsers}
+                  </div>
+                </div>
+
+                {/* Users Table */}
+                <div className="bg-white rounded-xl border border-stone-200 overflow-x-auto">
+                  <table className="w-full text-left text-xs">
+                    <thead className="bg-[#F4EFE6] border-b border-stone-200 text-stone-700 font-semibold">
+                      <tr>
+                        <th className="p-3 sm:p-4">Потребител</th>
+                        <th className="p-3 sm:p-4">Имейл</th>
+                        <th className="p-3 sm:p-4">Роля</th>
+                        <th className="p-3 sm:p-4">Статус</th>
+                        <th className="p-3 sm:p-4">Дата на регистрация</th>
+                        <th className="p-3 sm:p-4 text-right">Действия</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody className="divide-y divide-stone-200">
+                      {filteredUsers.length === 0 ? (
+                        <tr>
+                          <td colSpan={6} className="p-8 text-center text-stone-500 text-xs">
+                            Няма намерени потребители по зададеното търсене.
+                          </td>
+                        </tr>
+                      ) : (
+                        filteredUsers.map((user) => {
+                          const isProtected = user.role === 'admin' || user.id === currentUser?.id;
+                          const isBlocked = user.status === 'blocked';
+                          const isBusy = busyUserId === user.id;
+
+                          return (
+                            <tr key={user.id} className="hover:bg-stone-50">
+                              <td className="p-3 sm:p-4 font-semibold text-stone-900">
+                                {user.name}
+                              </td>
+                              <td className="p-3 sm:p-4 text-stone-600 font-mono text-[11px]">
+                                {user.email}
+                              </td>
+                              <td className="p-3 sm:p-4">
+                                {user.role === 'admin' ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-bold bg-amber-100 text-amber-950 border border-amber-300">
+                                    <ShieldCheck className="w-3 h-3 text-amber-800" />
+                                    <span>Администратор</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-medium bg-stone-100 text-stone-700 border border-stone-200">
+                                    <UserIcon className="w-3 h-3 text-stone-600" />
+                                    <span>Потребител</span>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-3 sm:p-4">
+                                {isBlocked ? (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-bold bg-rose-100 text-rose-900 border border-rose-200">
+                                    <Ban className="w-3 h-3 text-rose-700" />
+                                    <span>Блокиран</span>
+                                  </span>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-900 border border-emerald-200">
+                                    <UserCheck className="w-3 h-3 text-emerald-700" />
+                                    <span>Активен</span>
+                                  </span>
+                                )}
+                              </td>
+                              <td className="p-3 sm:p-4 text-stone-500 text-[11px] tabular-nums">
+                                {new Date(user.createdAt).toLocaleDateString('bg-BG')}
+                              </td>
+                              <td className="p-3 sm:p-4 text-right">
+                                {isProtected ? (
+                                  <span className="text-[11px] text-stone-400 italic">
+                                    Защитен акаунт
+                                  </span>
+                                ) : (
+                                  <div className="inline-flex items-center justify-end gap-1.5">
+                                    <button
+                                      type="button"
+                                      disabled={isBusy}
+                                      onClick={() => handleToggleUserStatus(user)}
+                                      className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold inline-flex items-center gap-1 border transition-colors cursor-pointer disabled:opacity-50 ${
+                                        isBlocked
+                                          ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border-emerald-200'
+                                          : 'bg-amber-50 hover:bg-amber-100 text-amber-900 border-amber-200'
+                                      }`}
+                                      title={isBlocked ? 'Отблокирай потребителя' : 'Блокирай потребителя'}
+                                    >
+                                      {isBlocked ? (
+                                        <>
+                                          <UserCheck className="w-3 h-3" />
+                                          <span>Отблокирай</span>
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Ban className="w-3 h-3" />
+                                          <span>Блокирай</span>
+                                        </>
+                                      )}
+                                    </button>
+
+                                    <button
+                                      type="button"
+                                      disabled={isBusy}
+                                      onClick={() => setConfirmDeleteUser(user)}
+                                      className="p-1.5 text-stone-400 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                                      title="Изтрий потребител"
+                                      aria-label={`Изтрий ${user.name}`}
+                                    >
+                                      <Trash2 className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* TAB 4: Contact Messages */}
           {activeTab === 'messages' && (
@@ -760,6 +999,53 @@ export const AdminPanel: React.FC<AdminPanelProps> = ({
           )}
         </div>
       </div>
+
+      {/* In-App Confirm Delete User Modal */}
+      {confirmDeleteUser && (
+        <div
+          className="fixed inset-0 z-[60] bg-stone-950/70 backdrop-blur-xs flex items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Потвърждение за изтриване на потребител"
+        >
+          <div className="bg-white w-full max-w-md rounded-2xl border border-stone-200 shadow-2xl p-6 space-y-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-red-100 text-red-700 flex items-center justify-center shrink-0">
+                <Trash2 className="w-5 h-5" />
+              </div>
+              <div className="space-y-1">
+                <h4 className="font-editorial text-lg font-bold text-stone-950">
+                  Изтриване на потребителски профил
+                </h4>
+                <p className="text-xs text-stone-600 leading-relaxed">
+                  Сигурни ли сте, че искате да изтриете профила на{' '}
+                  <strong className="text-stone-900">{confirmDeleteUser.name}</strong> (
+                  <span className="font-mono">{confirmDeleteUser.email}</span>)? Всички запазени любими обекти, лични маршрути и история ще бъдат премахнати безвъзвратно.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={busyUserId === confirmDeleteUser.id}
+                onClick={() => setConfirmDeleteUser(null)}
+                className="px-4 py-2 rounded-lg bg-stone-100 hover:bg-stone-200 text-stone-700 text-xs font-semibold cursor-pointer"
+              >
+                Отказ
+              </button>
+              <button
+                type="button"
+                disabled={busyUserId === confirmDeleteUser.id}
+                onClick={handleConfirmDeleteUser}
+                className="px-4 py-2 rounded-lg bg-red-700 hover:bg-red-800 text-white text-xs font-bold cursor-pointer disabled:opacity-50"
+              >
+                {busyUserId === confirmDeleteUser.id ? 'Изтриване...' : 'Потвърди изтриването'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

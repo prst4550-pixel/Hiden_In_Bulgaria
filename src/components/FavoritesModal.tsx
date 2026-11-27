@@ -46,7 +46,7 @@ export const FavoritesModal: React.FC<FavoritesModalProps> = ({
               <p className="text-[11px] text-stone-500 font-medium">
                 {currentUser
                   ? `Запазено единствено в профила на ${currentUser.name}`
-                  : 'Временен списък за гост сесия'}
+                  : 'Необходим е вход в профила, за да запазвате любими места'}
               </p>
             </div>
           </div>

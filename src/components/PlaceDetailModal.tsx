@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Place, Review } from '../types';
+import { Place, Review, User } from '../types';
 import { fetchReviews, submitReview } from '../services/api';
 import { handleImageError } from '../utils/imageFallback';
 import {
@@ -18,6 +18,7 @@ import {
   Send,
   MessageSquare,
   Edit3,
+  Lock,
 } from 'lucide-react';
 
 interface PlaceDetailModalProps {
@@ -31,6 +32,12 @@ interface PlaceDetailModalProps {
   allPlaces?: Place[];
   isAdmin?: boolean;
   onEditPlace?: (place: Place) => void;
+  currentUser?: User | null;
+  onRequireAuth?: (
+    message: string,
+    action: (user: User) => void | Promise<void>,
+    tab?: 'login' | 'register'
+  ) => boolean;
 }
 
 export const PlaceDetailModal: React.FC<PlaceDetailModalProps> = ({
@@ -44,6 +51,8 @@ export const PlaceDetailModal: React.FC<PlaceDetailModalProps> = ({
   allPlaces = [],
   isAdmin = false,
   onEditPlace,
+  currentUser,
+  onRequireAuth,
 }) => {
   const [copiedCoords, setCopiedCoords] = useState(false);
   const [sharedToast, setSharedToast] = useState(false);
@@ -56,12 +65,21 @@ export const PlaceDetailModal: React.FC<PlaceDetailModalProps> = ({
   const [visitSeason, setVisitSeason] = useState('Пролет 2026');
   const [isSubmittingReview, setIsSubmittingReview] = useState(false);
   const [reviewSuccess, setReviewSuccess] = useState(false);
+  const [reviewError, setReviewError] = useState<string | null>(null);
+  const [queuedReviewSubmit, setQueuedReviewSubmit] = useState(false);
 
   useEffect(() => {
     if (place) {
       fetchReviews(place.id).then(setReviews);
+      setReviewError(null);
     }
   }, [place]);
+
+  useEffect(() => {
+    if (currentUser && !authorName.trim()) {
+      setAuthorName(currentUser.name);
+    }
+  }, [currentUser]);
 
   if (!isOpen || !place) return null;
 
@@ -93,29 +111,52 @@ export const PlaceDetailModal: React.FC<PlaceDetailModalProps> = ({
     }
   };
 
-  const handleReviewSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!authorName.trim() || !reviewComment.trim()) return;
+  const performReviewSubmit = async (overrideAuthor?: string) => {
+    const finalAuthor = (overrideAuthor ?? authorName).trim();
+    if (!finalAuthor || !reviewComment.trim()) return;
 
+    setReviewError(null);
     try {
       setIsSubmittingReview(true);
       const newRev = await submitReview({
         placeId: place.id,
-        author: authorName,
+        author: finalAuthor,
         rating: reviewRating,
         comment: reviewComment,
         visitSeason: visitSeason,
       });
-      setReviews([newRev, ...reviews]);
-      setAuthorName('');
+      setReviews((prev) => [newRev, ...prev]);
       setReviewComment('');
       setReviewSuccess(true);
       setTimeout(() => setReviewSuccess(false), 3000);
-    } catch (err) {
-      console.error(err);
+    } catch (err: any) {
+      setReviewError(err.message || 'Грешка при публикуване на отзива.');
     } finally {
       setIsSubmittingReview(false);
     }
+  };
+
+  useEffect(() => {
+    if (currentUser && queuedReviewSubmit) {
+      setQueuedReviewSubmit(false);
+      void performReviewSubmit(authorName.trim() || currentUser.name);
+    }
+  }, [currentUser, queuedReviewSubmit]);
+
+  const handleReviewSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!reviewComment.trim()) return;
+    if (!currentUser && onRequireAuth) {
+      onRequireAuth(
+        'Влезте в профила си или се регистрирайте, за да публикувате отзив за това място.',
+        () => {
+          setQueuedReviewSubmit(true);
+        }
+      );
+      return;
+    }
+    if (!authorName.trim() && !currentUser?.name) return;
+    await performReviewSubmit(authorName.trim() || currentUser?.name);
   };
 
   const relatedPlaces = allPlaces.filter((p) => place.nearbyPlaceIds?.includes(p.id));
@@ -381,6 +422,33 @@ export const PlaceDetailModal: React.FC<PlaceDetailModalProps> = ({
 
             {/* Submit Review Form */}
             <form onSubmit={handleReviewSubmit} className="bg-[#F7F4EE] p-5 rounded-xl border border-stone-200 space-y-4">
+              {!currentUser && onRequireAuth && (
+                <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-950 text-xs flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <Lock className="w-4 h-4 text-amber-800 shrink-0" />
+                    <span>Публикуването на отзиви изисква вход в профила или регистрация.</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onRequireAuth(
+                        'Влезте в профила си или се регистрирайте, за да публикувате отзив.',
+                        () => {}
+                      )
+                    }
+                    className="px-3 py-1.5 rounded-full bg-stone-900 hover:bg-stone-800 text-amber-200 font-bold text-[11px] shrink-0 cursor-pointer transition-colors self-start sm:self-auto"
+                  >
+                    Вход / Регистрация
+                  </button>
+                </div>
+              )}
+
+              {reviewError && (
+                <div className="p-3 rounded-xl bg-red-50 border border-red-200 text-red-900 text-xs">
+                  {reviewError}
+                </div>
+              )}
+
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-stone-700 mb-1">Вашето име</label>

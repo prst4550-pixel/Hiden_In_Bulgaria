@@ -17,6 +17,8 @@ import {
   Check,
   AlertCircle,
   KeyRound,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 
 interface AuthModalProps {
@@ -24,6 +26,7 @@ interface AuthModalProps {
   onClose: () => void;
   onSuccess: (user: User) => void;
   initialTab?: 'login' | 'register';
+  promptMessage?: string | null;
 }
 
 export const AuthModal: React.FC<AuthModalProps> = ({
@@ -31,6 +34,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   onClose,
   onSuccess,
   initialTab = 'login',
+  promptMessage = null,
 }) => {
   const [tab, setTab] = useState<'login' | 'register' | 'claim'>('login');
   const [adminStatus, setAdminStatus] = useState<AdminStatus | null>(null);
@@ -51,6 +55,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const [claimPassword, setClaimPassword] = useState('');
   const [claimPasswordConfirm, setClaimPasswordConfirm] = useState('');
 
+  // Password visibility toggles
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
+  const [showRegPassword, setShowRegPassword] = useState(false);
+  const [showRegPasswordConfirm, setShowRegPasswordConfirm] = useState(false);
+  const [showClaimPassword, setShowClaimPassword] = useState(false);
+  const [showClaimPasswordConfirm, setShowClaimPasswordConfirm] = useState(false);
+
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
@@ -60,6 +71,11 @@ export const AuthModal: React.FC<AuthModalProps> = ({
       setTab(initialTab);
       setErrorMessage(null);
       setSuccessMessage(null);
+      setShowLoginPassword(false);
+      setShowRegPassword(false);
+      setShowRegPasswordConfirm(false);
+      setShowClaimPassword(false);
+      setShowClaimPasswordConfirm(false);
       fetchAdminStatus()
         .then((status) => {
           setAdminStatus(status);
@@ -240,6 +256,13 @@ export const AuthModal: React.FC<AuthModalProps> = ({
 
         {/* Content Area */}
         <div className="p-5 sm:p-6 space-y-4">
+          {promptMessage && !successMessage && (
+            <div className="p-3 bg-amber-50 border border-amber-200 text-amber-950 text-xs rounded-xl flex items-start gap-2 leading-relaxed">
+              <Lock className="w-4 h-4 text-amber-800 shrink-0 mt-0.5" />
+              <span>{promptMessage}</span>
+            </div>
+          )}
+
           {errorMessage && (
             <div
               role="alert"
@@ -282,16 +305,25 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   Парола
                 </label>
                 <div className="relative">
-                  <Lock className="w-4 h-4 text-stone-400 absolute left-3 top-2.5" />
+                  <Lock className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
-                    type="password"
+                    type={showLoginPassword ? 'text' : 'password'}
                     required
                     autoComplete="current-password"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm bg-white rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
+                    className="w-full pl-9 pr-10 py-2 text-xs sm:text-sm bg-white rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowLoginPassword((prev) => !prev)}
+                    aria-label={showLoginPassword ? 'Скрий паролата' : 'Покажи паролата'}
+                    title={showLoginPassword ? 'Скрий паролата' : 'Покажи паролата'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-stone-500 hover:text-stone-900 rounded-md transition-colors cursor-pointer"
+                  >
+                    {showLoginPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
@@ -368,17 +400,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   Парола (мин. 8 символа, букви и цифри) <span className="text-red-600">*</span>
                 </label>
                 <div className="relative">
-                  <Lock className="w-4 h-4 text-stone-400 absolute left-3 top-2.5" />
+                  <Lock className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
-                    type="password"
+                    type={showRegPassword ? 'text' : 'password'}
                     required
                     minLength={8}
                     autoComplete="new-password"
                     value={regPassword}
                     onChange={(e) => setRegPassword(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm bg-white rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
+                    className="w-full pl-9 pr-10 py-2 text-xs sm:text-sm bg-white rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowRegPassword((prev) => !prev)}
+                    aria-label={showRegPassword ? 'Скрий паролата' : 'Покажи паролата'}
+                    title={showRegPassword ? 'Скрий паролата' : 'Покажи паролата'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-stone-500 hover:text-stone-900 rounded-md transition-colors cursor-pointer"
+                  >
+                    {showRegPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
@@ -387,17 +428,26 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                   Потвърди паролата <span className="text-red-600">*</span>
                 </label>
                 <div className="relative">
-                  <Lock className="w-4 h-4 text-stone-400 absolute left-3 top-2.5" />
+                  <Lock className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
                   <input
-                    type="password"
+                    type={showRegPasswordConfirm ? 'text' : 'password'}
                     required
                     minLength={8}
                     autoComplete="new-password"
                     value={regPasswordConfirm}
                     onChange={(e) => setRegPasswordConfirm(e.target.value)}
                     placeholder="••••••••"
-                    className="w-full pl-9 pr-3 py-2 text-xs sm:text-sm bg-white rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
+                    className="w-full pl-9 pr-10 py-2 text-xs sm:text-sm bg-white rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
                   />
+                  <button
+                    type="button"
+                    onClick={() => setShowRegPasswordConfirm((prev) => !prev)}
+                    aria-label={showRegPasswordConfirm ? 'Скрий паролата' : 'Покажи паролата'}
+                    title={showRegPasswordConfirm ? 'Скрий паролата' : 'Покажи паролата'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-stone-500 hover:text-stone-900 rounded-md transition-colors cursor-pointer"
+                  >
+                    {showRegPasswordConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
                 </div>
               </div>
 
@@ -452,32 +502,54 @@ export const AuthModal: React.FC<AuthModalProps> = ({
                 <label className="block text-xs font-semibold text-stone-700 mb-1">
                   Нова администраторска парола
                 </label>
-                <input
-                  type="password"
-                  required
-                  minLength={8}
-                  autoComplete="new-password"
-                  value={claimPassword}
-                  onChange={(e) => setClaimPassword(e.target.value)}
-                  placeholder="Мин. 8 символа, букви и цифри"
-                  className="w-full px-3 py-2 text-xs sm:text-sm bg-white rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
-                />
+                <div className="relative">
+                  <input
+                    type={showClaimPassword ? 'text' : 'password'}
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    value={claimPassword}
+                    onChange={(e) => setClaimPassword(e.target.value)}
+                    placeholder="Мин. 8 символа, букви и цифри"
+                    className="w-full pl-3 pr-10 py-2 text-xs sm:text-sm bg-white rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowClaimPassword((prev) => !prev)}
+                    aria-label={showClaimPassword ? 'Скрий паролата' : 'Покажи паролата'}
+                    title={showClaimPassword ? 'Скрий паролата' : 'Покажи паролата'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-stone-500 hover:text-stone-900 rounded-md transition-colors cursor-pointer"
+                  >
+                    {showClaimPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div>
                 <label className="block text-xs font-semibold text-stone-700 mb-1">
                   Потвърдете паролата
                 </label>
-                <input
-                  type="password"
-                  required
-                  minLength={8}
-                  autoComplete="new-password"
-                  value={claimPasswordConfirm}
-                  onChange={(e) => setClaimPasswordConfirm(e.target.value)}
-                  placeholder="••••••••"
-                  className="w-full px-3 py-2 text-xs sm:text-sm bg-white rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
-                />
+                <div className="relative">
+                  <input
+                    type={showClaimPasswordConfirm ? 'text' : 'password'}
+                    required
+                    minLength={8}
+                    autoComplete="new-password"
+                    value={claimPasswordConfirm}
+                    onChange={(e) => setClaimPasswordConfirm(e.target.value)}
+                    placeholder="••••••••"
+                    className="w-full pl-3 pr-10 py-2 text-xs sm:text-sm bg-white rounded-lg border border-stone-300 focus:outline-none focus:ring-2 focus:ring-amber-800/40"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowClaimPasswordConfirm((prev) => !prev)}
+                    aria-label={showClaimPasswordConfirm ? 'Скрий паролата' : 'Покажи паролата'}
+                    title={showClaimPasswordConfirm ? 'Скрий паролата' : 'Покажи паролата'}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 text-stone-500 hover:text-stone-900 rounded-md transition-colors cursor-pointer"
+                  >
+                    {showClaimPasswordConfirm ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center gap-2 pt-1">

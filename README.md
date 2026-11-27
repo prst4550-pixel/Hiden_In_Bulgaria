@@ -114,6 +114,8 @@ Edit `.env` at the project root before starting the server in staging or product
 │   └── database.json            # Persistent runtime store (places, suggestions, reviews, users, inquiries)
 ├── public/
 │   ├── places/                  # Verified landmark photography
+│   ├── logo-emblem.jpg          # Brand emblem artwork
+│   ├── favicon.svg              # Browser vector icon
 │   ├── robots.txt               # Search engine crawl directives
 │   └── sitemap.xml              # XML sitemap for indexed sections
 └── src/
@@ -140,13 +142,14 @@ Edit `.env` at the project root before starting the server in staging or product
         ├── Footer.tsx           # Editorial footer with navigation and legal links
         ├── GoogleMapView.tsx    # Optional Google Maps provider view
         ├── Hero.tsx             # Landing hero with live search and category chips
-        ├── InteractiveMap.tsx   # Leaflet/OSM/Hillshade map, safe DOM popups, and trail simulation
+        ├── InteractiveMap.tsx   # Leaflet/OSM/Hillshade map, safe DOM popups, custom route builder, and trail simulation
         ├── LegalPages.tsx       # Privacy Policy, Terms & Conditions, Cookie Policy, and Contact page
         ├── LiquidGlassDropdown.tsx # Accessible custom filter select menu
         ├── Navbar.tsx           # Responsive header navigation and account menu
         ├── PlaceCard.tsx        # Catalog destination card
         ├── PlaceDetailModal.tsx # Landmark dossier, GPS coordinates, reviews, and nearby locations
-        ├── RouteList.tsx        # Curated expedition routes showcase
+        ├── ProfileModal.tsx     # Isolated user profile management and personal activity modal
+        ├── RouteList.tsx        # Curated and custom expedition routes showcase
         └── SsmsStudioView.tsx   # Admin-only T-SQL query runner and SSMS export console
 ```
 

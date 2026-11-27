@@ -31,6 +31,11 @@ interface RouteListProps {
   onDeleteCustomRoute: (routeId: string) => void;
   currentUser?: User | null;
   onOpenAuth?: (tab?: 'login' | 'register') => void;
+  onRequireAuth?: (
+    message: string,
+    action: (user: User) => void | Promise<void>,
+    tab?: 'login' | 'register'
+  ) => boolean;
 }
 
 interface DraftStop {
@@ -61,6 +66,7 @@ export const RouteList: React.FC<RouteListProps> = ({
   onDeleteCustomRoute,
   currentUser,
   onOpenAuth,
+  onRequireAuth,
 }) => {
   const [isBuilderOpen, setIsBuilderOpen] = useState(false);
   const [editingRouteId, setEditingRouteId] = useState<string | null>(null);
@@ -104,6 +110,16 @@ export const RouteList: React.FC<RouteListProps> = ({
   };
 
   const handleOpenNewBuilder = () => {
+    if (!currentUser && onRequireAuth) {
+      onRequireAuth(
+        'Влезте или се регистрирайте, за да създавате и запазвате собствени маршрути.',
+        () => {
+          resetBuilder();
+          setIsBuilderOpen(true);
+        }
+      );
+      return;
+    }
     if (isBuilderOpen && !editingRouteId) {
       setIsBuilderOpen(false);
       return;
@@ -112,7 +128,7 @@ export const RouteList: React.FC<RouteListProps> = ({
     setIsBuilderOpen(true);
   };
 
-  const handleEditCustomRoute = (route: Route) => {
+  const performEditCustomRoute = (route: Route) => {
     const matchedStops: DraftStop[] = route.stops
       .map((stop) => {
         const place = places.find((p) => p.id === stop.placeId || p.slug === stop.placeId);
@@ -129,6 +145,17 @@ export const RouteList: React.FC<RouteListProps> = ({
     setFormError(null);
     setIsBuilderOpen(true);
     window.scrollTo({ top: 100, behavior: 'smooth' });
+  };
+
+  const handleEditCustomRoute = (route: Route) => {
+    if (!currentUser && onRequireAuth) {
+      onRequireAuth(
+        'Влезте в профила си, за да редактирате личните си маршрути.',
+        () => performEditCustomRoute(route)
+      );
+      return;
+    }
+    performEditCustomRoute(route);
   };
 
   const handleTogglePlaceInDraft = (place: Place) => {
@@ -160,7 +187,7 @@ export const RouteList: React.FC<RouteListProps> = ({
     );
   };
 
-  const handleSave = (openOnMapAfter: boolean) => {
+  const performSave = (openOnMapAfter: boolean) => {
     const trimmedTitle = title.trim();
     if (!trimmedTitle) {
       setFormError('Въведете име на маршрута.');
@@ -217,6 +244,17 @@ export const RouteList: React.FC<RouteListProps> = ({
     if (openOnMapAfter) {
       onExploreRouteOnMap(builtRoute);
     }
+  };
+
+  const handleSave = (openOnMapAfter: boolean) => {
+    if (!currentUser && onRequireAuth) {
+      onRequireAuth(
+        'Влезте или създайте акаунт, за да запазите маршрута във вашия профил.',
+        () => performSave(openOnMapAfter)
+      );
+      return;
+    }
+    performSave(openOnMapAfter);
   };
 
   const renderRouteCard = (route: Route) => (
@@ -380,7 +418,16 @@ export const RouteList: React.FC<RouteListProps> = ({
       <div className="p-6 pt-0 mt-2">
         <button
           type="button"
-          onClick={() => onExploreRouteOnMap(route)}
+          onClick={() => {
+            if (!currentUser && onRequireAuth) {
+              onRequireAuth(
+                `Влезте или се регистрирайте, за да проследите и използвате маршрута „${route.title}“ на картата.`,
+                () => onExploreRouteOnMap(route)
+              );
+              return;
+            }
+            onExploreRouteOnMap(route);
+          }}
           className="btn-liquid-dark water-shimmer w-full py-3.5 rounded-full text-amber-200 hover:text-amber-100 text-xs font-bold flex items-center justify-center gap-2 shadow-md cursor-pointer"
         >
           <MapPin className="w-4 h-4 text-amber-400" />

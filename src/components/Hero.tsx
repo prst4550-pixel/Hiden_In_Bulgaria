@@ -25,6 +25,7 @@ interface HeroProps {
   onSelectCategory?: (categoryId: string) => void;
   onSearchSubmit?: (searchTerm: string) => void;
   isAdmin?: boolean;
+  placesCount?: number;
 }
 
 const HERO_PLACES = [
@@ -106,6 +107,7 @@ export const Hero: React.FC<HeroProps> = ({
   onSelectCategory,
   onSearchSubmit,
   isAdmin = false,
+  placesCount = 48,
 }) => {
   const [activeSlide, setActiveSlide] = useState(0);
   const [searchInput, setSearchInput] = useState('');
@@ -143,7 +145,7 @@ export const Hero: React.FC<HeroProps> = ({
             <Compass className="w-4 h-4 text-amber-800" />
             <span className="text-stone-900 font-bold">Картографски атлас на България</span>
             <span aria-hidden="true" className="text-stone-300">·</span>
-            <span>48 Документирани обекта</span>
+            <span>{placesCount} Документирани обекта</span>
             <span aria-hidden="true" className="text-stone-300">·</span>
             <span className="text-emerald-800 flex items-center gap-1 font-semibold">
               <Camera className="w-3.5 h-3.5" />
@@ -196,7 +198,7 @@ export const Hero: React.FC<HeroProps> = ({
                 </h1>
 
                 <p className="text-sm sm:text-base text-stone-200 font-normal leading-relaxed max-w-xl drop-shadow-xs">
-                  Точен картографски архив на 48 диви светилища, забравени средновековни твърдини, карстови каньони и водопади с проверени координати, пътеки и истински теренни фотографии.
+                  Точен картографски архив на {placesCount} диви светилища, забравени средновековни твърдини, карстови каньони и водопади с проверени координати, пътеки и истински теренни фотографии.
                 </p>
               </div>
 
@@ -273,7 +275,7 @@ export const Hero: React.FC<HeroProps> = ({
                   className="btn-liquid-emerald water-shimmer liquid-iridescent-rim px-5 sm:px-6 py-3 sm:py-3.5 rounded-full text-white font-bold text-xs sm:text-sm flex items-center justify-center gap-2 group cursor-pointer shadow-md hover:scale-105 active:scale-95 transition-all shrink-0"
                 >
                   <Sparkles className="w-4 h-4 text-emerald-100 group-hover:scale-110 transition-transform duration-300" />
-                  <span>Пътеводител (Gemini 4 Flash)</span>
+                  <span>Интерактивен пътеводител</span>
                 </button>
 
                 {/* Database Button - STRICTLY FOR ADMIN ONLY */}
@@ -398,7 +400,7 @@ export const Hero: React.FC<HeroProps> = ({
         {/* Live Expedition Metric Strip - Liquid Water Cards */}
         <div className="grid grid-cols-2 md:grid-cols-4 gap-4 pt-6 border-t border-stone-200/50">
           <div className="p-4 sm:p-5 liquid-water-card rounded-2xl shadow-2xs space-y-1">
-            <div className="font-editorial text-3xl font-bold text-stone-900">48</div>
+            <div className="font-editorial text-3xl font-bold text-stone-900">{placesCount}</div>
             <div className="text-xs font-semibold text-stone-800">Верифицирани обекта</div>
             <div className="text-[11px] text-stone-500">Светилища, крепости, пещери</div>
           </div>
@@ -412,7 +414,7 @@ export const Hero: React.FC<HeroProps> = ({
           <div className="p-4 sm:p-5 liquid-water-card rounded-2xl shadow-2xs space-y-1">
             <div className="font-editorial text-3xl font-bold text-emerald-800">100%</div>
             <div className="text-xs font-semibold text-stone-800">Реални снимки</div>
-            <div className="text-[11px] text-stone-500">Google & Commons теренни кадри</div>
+            <div className="text-[11px] text-stone-500">Автентични теренни кадри</div>
           </div>
 
 
@@ -434,11 +436,11 @@ export const Hero: React.FC<HeroProps> = ({
               className="p-4 sm:p-5 liquid-water-card water-shimmer rounded-2xl shadow-2xs space-y-1 cursor-pointer transition-all group"
             >
               <div className="font-editorial text-3xl font-bold text-emerald-800 flex items-center justify-between">
-                <span>AI</span>
+                <span>Live</span>
                 <Sparkles className="w-5 h-5 text-emerald-600 group-hover:scale-110 transition-transform duration-300" />
               </div>
-              <div className="text-xs font-semibold text-stone-900">Gemini 4 Flash</div>
-              <div className="text-[11px] text-stone-600">Теренен краевед съветник</div>
+              <div className="text-xs font-semibold text-stone-900">Теренен пътеводител</div>
+              <div className="text-[11px] text-stone-600">Цени, хотели и метео прогнози</div>
             </div>
           )}
 

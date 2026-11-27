@@ -43,6 +43,11 @@ interface InteractiveMapProps {
   activeRoute?: RouteType | null;
   onSelectActiveRoute?: (route: RouteType | null) => void;
   onSaveCustomRoute?: (route: RouteType) => void;
+  onRequireAuth?: (
+    message: string,
+    action: (user: User) => void | Promise<void>,
+    tab?: 'login' | 'register'
+  ) => boolean;
 }
 
 function sanitizeImageSrc(rawUrl: string | undefined, fallback: string): string {
@@ -267,6 +272,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
   activeRoute = null,
   onSelectActiveRoute,
   onSaveCustomRoute,
+  onRequireAuth,
 }) => {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapInstanceRef = useRef<L.Map | null>(null);
@@ -445,7 +451,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     });
   };
 
-  const handleSaveMapRoute = () => {
+  const performSaveMapRoute = () => {
     const trimmed = draftTitle.trim();
     if (!trimmed) {
       setBuilderError('Въведете име на маршрута.');
@@ -502,6 +508,17 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
     setBuilderSearch('');
     setBuilderError(null);
     onSelectActiveRoute?.(newRoute);
+  };
+
+  const handleSaveMapRoute = () => {
+    if (!currentUser && onRequireAuth) {
+      onRequireAuth(
+        'Влезте или създайте акаунт, за да запазите маршрута във вашия профил.',
+        () => performSaveMapRoute()
+      );
+      return;
+    }
+    performSaveMapRoute();
   };
 
   // Initialize Leaflet Map
@@ -1146,6 +1163,16 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
                       onSelectActiveRoute?.(null);
                     } else {
                       const picked = routes.find((r) => r.id === val) || null;
+                      if (!currentUser && onRequireAuth && picked) {
+                        onRequireAuth(
+                          `Влезте или се регистрирайте, за да проследите маршрута „${picked.title}“ на картата.`,
+                          () => {
+                            setIsBuildingRoute(false);
+                            onSelectActiveRoute?.(picked);
+                          }
+                        );
+                        return;
+                      }
                       setIsBuildingRoute(false);
                       onSelectActiveRoute?.(picked);
                     }
@@ -1160,6 +1187,16 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
               <button
                 type="button"
                 onClick={() => {
+                  if (!currentUser && onRequireAuth) {
+                    onRequireAuth(
+                      'Влезте или се регистрирайте, за да създавате и запазвате лични маршрути на картата.',
+                      () => {
+                        setBuilderError(null);
+                        setIsBuildingRoute(true);
+                      }
+                    );
+                    return;
+                  }
                   setIsBuildingRoute((prev) => {
                     const next = !prev;
                     if (next) {

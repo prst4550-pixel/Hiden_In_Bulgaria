@@ -233,9 +233,12 @@ export async function sendGuideMessage(
   try {
     const res = await fetch('/api/guide/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...getAuthHeader(),
+      },
       body: JSON.stringify({ message, history, image, mimeType }),
-      signal: AbortSignal.timeout(40000),
+      signal: AbortSignal.timeout(60000),
     });
     return await safeJsonParse(res, 'Временна грешка при връзка с Пътеводителя.');
   } catch (err: any) {
@@ -351,6 +354,37 @@ export async function fetchUsers(): Promise<User[]> {
   } catch {
     return [];
   }
+}
+
+export async function updateUserStatus(
+  userId: string,
+  status: 'active' | 'blocked'
+): Promise<{ user: User; message: string }> {
+  const res = await fetch(`/api/users/${encodeURIComponent(userId)}/status`, {
+    method: 'PATCH',
+    headers: {
+      'Content-Type': 'application/json',
+      ...getAuthHeader(),
+    },
+    body: JSON.stringify({ status }),
+  });
+  return await safeJsonParse<{ user: User; message: string }>(
+    res,
+    'Грешка при промяна на статуса на потребителя.'
+  );
+}
+
+export async function deleteUserAccount(userId: string): Promise<{ message: string }> {
+  const res = await fetch(`/api/users/${encodeURIComponent(userId)}`, {
+    method: 'DELETE',
+    headers: {
+      ...getAuthHeader(),
+    },
+  });
+  return await safeJsonParse<{ message: string }>(
+    res,
+    'Грешка при изтриване на потребителя.'
+  );
 }
 
 // -------------------------------------------------------------

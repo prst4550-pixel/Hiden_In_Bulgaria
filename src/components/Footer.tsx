@@ -22,11 +22,11 @@ export const Footer: React.FC<FooterProps> = ({
           {/* Mission and Brand (5 cols) */}
           <div className="md:col-span-5 space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-full overflow-hidden bg-white shadow-md border-2 border-amber-600/60 shrink-0 flex items-center justify-center">
+              <div className="w-12 h-12 rounded-full overflow-hidden bg-[#13191d] shadow-md border-2 border-amber-500/70 shrink-0 flex items-center justify-center">
                 <img
-                  src="/assets/aistudio/Gemini_Generated_Image_mmkbywmmkbywmmkb_135f5291.jpg"
+                  src="/logo-emblem.jpg"
                   alt="Скрито в България емблема"
-                  className="w-full h-full object-cover object-center scale-125 hover:rotate-6 transition-transform duration-500"
+                  className="w-full h-full object-cover object-center scale-[1.34] hover:scale-[1.38] transition-transform duration-500"
                   onError={(e) => {
                     const img = e.target as HTMLImageElement;
                     img.onerror = null;
@@ -108,7 +108,7 @@ export const Footer: React.FC<FooterProps> = ({
               Теренен кодекс
             </div>
             <p className="text-stone-400 text-xs leading-relaxed">
-              Не оставяйте следи, спазвайте маркировките и пазете древните камъни. Всички снимки в платформата са 100% истински реални фотографии от реални фотоапарати и публични архиви, без изкуствено генерирани илюстрации.
+              Не оставяйте следи, спазвайте маркировките и пазете древните камъни. Всички обекти в платформата са придружени от проверени координати, теренни бележки и подбрани автентични фотографии.
             </p>
             <div className="pt-3 flex flex-col gap-2">
               <div className="flex items-center gap-2 text-xs text-stone-400">

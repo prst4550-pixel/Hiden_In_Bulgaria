@@ -258,18 +258,31 @@ export const LegalPages: React.FC<LegalPagesProps> = ({ mode, onNavigate }) => {
                   </thead>
                   <tbody className="divide-y divide-stone-200">
                     <tr>
-                      <td className="p-3 font-mono text-stone-900">hb_favorites</td>
-                      <td className="p-3">Запазва списъка с избраните от вас любими обекти.</td>
-                      <td className="p-3">До изчистване от потребителя</td>
+                      <td className="p-3 font-mono text-stone-900">hb_guest_favorites</td>
+                      <td className="p-3">Запазва избраните от вас любими обекти в гост режим.</td>
+                      <td className="p-3">До изчистване или вход в профил</td>
                     </tr>
                     <tr>
-                      <td className="p-3 font-mono text-stone-900">hb_recent_trail</td>
-                      <td className="p-3">Съхранява последните 3 разгледани локации за маршрута „Пътека от стъпки“.</td>
+                      <td className="p-3 font-mono text-stone-900">hb_guest_recent_trail</td>
+                      <td className="p-3">Съхранява последните 3 разгледани локации за маршрута „Пътека от стъпки“ в гост режим.</td>
                       <td className="p-3">До изчистване от бутона в картата</td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-mono text-stone-900">hb_guest_custom_routes</td>
+                      <td className="p-3">Съхранява създадените от вас маршрути в гост режим.</td>
+                      <td className="p-3">До изтриване от потребителя</td>
+                    </tr>
+                    <tr>
+                      <td className="p-3 font-mono text-stone-900">hb_guest_guide_chat</td>
+                      <td className="p-3">Пази локално историята на текущия разговор с Пътеводителя в гост режим.</td>
+                      <td className="p-3">До започване на нов разговор</td>
                     </tr>
                   </tbody>
                 </table>
               </div>
+              <p className="text-xs text-stone-600 pt-2">
+                При вход в личен потребителски профил всички любими места, персонални маршрути, пътека и разговори се съхраняват изолирано в сървърната база данни единствено към вашия акаунт.
+              </p>
             </section>
 
             <section className="space-y-2">

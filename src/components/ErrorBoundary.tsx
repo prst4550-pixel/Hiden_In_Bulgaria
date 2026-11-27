@@ -28,11 +28,11 @@ export class ErrorBoundary extends React.Component<
 
   render() {
     if (this.state.hasError) {
-      let friendlyMsg = 'Възникна проблем при връзката с данните. Моля, опитайте да презаредите страницата.';
-      if (this.state.message.includes('permission-denied') || this.state.message.includes('Missing or insufficient permissions')) {
-        friendlyMsg = 'Нямате достатъчни права за тази операция в базата данни. Влезте с вашия профил и опитайте отново.';
-      } else if (this.state.message.includes('Quota exceeded')) {
-        friendlyMsg = 'Дневният лимит на Firestore е достигнат. Квотата се нулира автоматично на следващия ден.';
+      let friendlyMsg = 'Възникна неочаквана грешка при зареждането на интерфейса. Моля, опитайте да презаредите страницата.';
+      if (this.state.message.includes('401') || this.state.message.includes('403') || this.state.message.includes('Unauthorized')) {
+        friendlyMsg = 'Нямате достатъчни права за тази операция. Влезте с вашия профил и опитайте отново.';
+      } else if (this.state.message.includes('429') || this.state.message.includes('Quota exceeded')) {
+        friendlyMsg = 'Сървърът е временно натоварен или дневният лимит е достигнат. Моля, опитайте отново след малко.';
       }
 
       return (

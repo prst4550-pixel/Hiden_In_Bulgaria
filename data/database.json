@@ -1483,11 +1483,12 @@
       "id": "usr-admin-1",
       "name": "Администратор",
       "email": "prst4550@gmail.com",
-      "passwordHash": "e7840b149d89f8b06f7820f160cca488696c0e2d4a87eb778b2db19edda37b956a5e87cd47afb00dc348cfe953b71e0a7ca855317637c935abc67efe56bf2953",
-      "salt": "8e4fec93db58ed60e9e625520bd06abf083c7962a75685d9e6ce73838aa2fe11",
+      "passwordHash": "98e27d81549dbb27caa2bf43eddd9776193d757f599f752834137ac6d6721d04184365c119c979296c101276e12e2020d6b21573cd0924e59a7fe00342a6255b",
+      "salt": "21327eb5784b344d221ab8695995d707ac190ed57560bc949d5adacbba06b7fd",
       "hashAlgorithm": "scrypt",
       "role": "admin",
-      "createdAt": "2026-10-16T08:19:54.608Z"
+      "createdAt": "2026-10-16T08:19:54.608Z",
+      "status": "active"
     },
     {
       "id": "usr-regular-1",
@@ -1497,7 +1498,8 @@
       "salt": "34ba0a7b3e6f4b937749d104bd850466",
       "hashAlgorithm": "pbkdf2",
       "role": "user",
-      "createdAt": "2026-10-13T08:19:54.609Z"
+      "createdAt": "2026-10-13T08:19:54.609Z",
+      "status": "active"
     }
   ],
   "contactMessages": [],
