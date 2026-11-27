@@ -245,6 +245,8 @@ interface DatabaseSchema {
   contactMessages: ContactMessage[];
   userProfiles: Record<string, UserProfileData>;
   auditLog: AuditLogEntry[];
+  // Persist hashed sessions so valid logins survive a server restart.
+  sessions?: Record<string, { userId: string; expiresAt: number }>;
 }
 
 function createSalt(): string {
@@ -332,6 +334,9 @@ function initDatabase(): DatabaseSchema {
     if (!Array.isArray(data.reviews)) data.reviews = [];
     if (!Array.isArray(data.contactMessages)) data.contactMessages = [];
     if (!Array.isArray(data.auditLog)) data.auditLog = [];
+    if (!data.sessions || typeof data.sessions !== 'object' || Array.isArray(data.sessions)) {
+      data.sessions = {};
+    }
     if (!data.userProfiles || typeof data.userProfiles !== 'object' || Array.isArray(data.userProfiles)) {
       data.userProfiles = {};
     }
@@ -442,6 +447,7 @@ function initDatabase(): DatabaseSchema {
     contactMessages: [],
     auditLog: [],
     userProfiles: {},
+    sessions: {},
   };
 
   writeFileAtomic(DB_FILE, JSON.stringify(initialData, null, 2));
@@ -540,25 +546,39 @@ function isValidBulgariaCoordinates(lat: number, lng: number): boolean {
 // SESSION STORE & AUTHENTICATION MIDDLEWARE
 // -------------------------------------------------------------
 
-const activeSessions = new Map<string, { userId: string; expiresAt: number }>();
+// Store only SHA-256 hashes of bearer tokens. Sessions remain valid across server
+// restarts without writing usable credentials to the database.
+const activeSessions = new Map<string, { userId: string; expiresAt: number }>(
+  Object.entries(db.sessions || {})
+);
+
+function hashSessionToken(token: string): string {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
 
 const sessionCleanupTimer = setInterval(() => {
   const now = Date.now();
-  for (const [token, session] of activeSessions.entries()) {
+  let changed = false;
+  for (const [tokenHash, session] of activeSessions.entries()) {
     if (now > session.expiresAt) {
-      activeSessions.delete(token);
+      activeSessions.delete(tokenHash);
+      if (db.sessions) delete db.sessions[tokenHash];
+      changed = true;
     }
   }
+  if (changed) saveDatabase();
 }, 15 * 60 * 1000);
 sessionCleanupTimer.unref();
 
 function issueSessionToken(user: DbUser): string {
   const token = crypto.randomBytes(32).toString('hex');
+  const tokenHash = hashSessionToken(token);
   const ttlMs = user.role === 'admin' ? 24 * 60 * 60 * 1000 : 7 * 24 * 60 * 60 * 1000;
-  activeSessions.set(token, {
-    userId: user.id,
-    expiresAt: Date.now() + ttlMs,
-  });
+  const session = { userId: user.id, expiresAt: Date.now() + ttlMs };
+  activeSessions.set(tokenHash, session);
+  db.sessions ||= {};
+  db.sessions[tokenHash] = session;
+  saveDatabase();
   return token;
 }
 
@@ -574,11 +594,13 @@ function toSafeUser(u: DbUser): User {
 }
 
 function revokeUserSessions(userId: string) {
-  for (const [token, session] of activeSessions.entries()) {
+  for (const [tokenHash, session] of activeSessions.entries()) {
     if (session.userId === userId) {
-      activeSessions.delete(token);
+      activeSessions.delete(tokenHash);
+      if (db.sessions) delete db.sessions[tokenHash];
     }
   }
+  saveDatabase();
 }
 
 function getSessionAuthState(req: Request): { user: DbUser | null; blocked: boolean } {
@@ -589,22 +611,29 @@ function getSessionAuthState(req: Request): { user: DbUser | null; blocked: bool
   const token = authHeader.substring(7).trim();
   if (!token) return { user: null, blocked: false };
 
-  const session = activeSessions.get(token);
+  const tokenHash = hashSessionToken(token);
+  const session = activeSessions.get(tokenHash);
   if (!session) return { user: null, blocked: false };
 
   if (Date.now() > session.expiresAt) {
-    activeSessions.delete(token);
+    activeSessions.delete(tokenHash);
+    if (db.sessions) delete db.sessions[tokenHash];
+    saveDatabase();
     return { user: null, blocked: false };
   }
 
   const user = db.users.find((u) => u.id === session.userId);
   if (!user) {
-    activeSessions.delete(token);
+    activeSessions.delete(tokenHash);
+    if (db.sessions) delete db.sessions[tokenHash];
+    saveDatabase();
     return { user: null, blocked: false };
   }
 
   if (user.status === 'blocked') {
-    activeSessions.delete(token);
+    activeSessions.delete(tokenHash);
+    if (db.sessions) delete db.sessions[tokenHash];
+    saveDatabase();
     return { user: null, blocked: true };
   }
 
@@ -1313,7 +1342,10 @@ app.post('/api/auth/logout', (req: Request, res: Response) => {
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
     const token = authHeader.substring(7).trim();
-    activeSessions.delete(token);
+    const tokenHash = hashSessionToken(token);
+    activeSessions.delete(tokenHash);
+    if (db.sessions) delete db.sessions[tokenHash];
+    saveDatabase();
   }
   res.json({ message: 'Успешен изход от системата.' });
 });
