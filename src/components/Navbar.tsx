@@ -10,7 +10,6 @@ import {
   User as UserIcon,
   Shield,
   ChevronDown,
-  Database,
   Sparkles,
   MapPin,
   Camera,
@@ -68,17 +67,6 @@ export const Navbar: React.FC<NavbarProps> = ({
       dotColor: 'bg-emerald-400',
     },
     { id: 'community', label: 'Общност', icon: Camera },
-    ...(isAdmin
-      ? [
-          {
-            id: 'ssms',
-            label: 'SSMS База',
-            icon: Database,
-            hasDot: true,
-            dotColor: 'bg-blue-400',
-          },
-        ]
-      : []),
   ];
 
   // Close dropdown on outside click
@@ -260,16 +248,6 @@ export const Navbar: React.FC<NavbarProps> = ({
                         <PlusCircle className="w-4 h-4 text-emerald-700" />
                         <span>Добави нов обект</span>
                       </button>
-                      <button
-                        onClick={() => {
-                          setUserDropdownOpen(false);
-                          handleNavClick('ssms');
-                        }}
-                        className="w-full text-left px-4 py-2 text-blue-700 hover:bg-blue-50 hover:text-blue-900 flex items-center gap-2 transition-colors font-medium"
-                      >
-                        <Database className="w-4 h-4 text-[#0078D4]" />
-                        <span>SSMS Студио (T-SQL База)</span>
-                      </button>
                     </div>
                   )}
 
@@ -313,7 +291,7 @@ export const Navbar: React.FC<NavbarProps> = ({
               {/* Login Button - Liquid Glass Focus Pill */}
               <button
                 onClick={() => onOpenAuth('login')}
-                className="liquid-glass-focus-pill px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-xs font-bold text-stone-800 hover:text-stone-950 rounded-full shrink-0 whitespace-nowrap cursor-pointer shadow-xs transition-all"
+                className="liquid-glass-focus-pill px-3.5 py-2.5 sm:py-2 text-xs font-bold text-stone-800 hover:text-stone-950 rounded-full shrink-0 whitespace-nowrap cursor-pointer shadow-xs transition-all"
               >
                 Вход
               </button>

@@ -411,7 +411,9 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       .slice(0, 8);
   }, [places, builderSearch]);
 
-  const filteredPlaces = places.filter((p) => {
+  // Memoised: a new array on every render would rebuild all markers (and re-run fitBounds)
+  // on every state change, e.g. while dragging sliders or during the trail simulation.
+  const filteredPlaces = useMemo(() => places.filter((p) => {
     if (selectedCategory !== 'all' && p.categoryId !== selectedCategory) return false;
     if (selectedRegion !== 'all' && p.regionId !== selectedRegion) return false;
     if (selectedDifficulty !== 'all' && p.difficulty !== selectedDifficulty) return false;
@@ -424,7 +426,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
       if (!matchName && !matchRegion && !matchCategory && !matchDesc) return false;
     }
     return true;
-  });
+  }), [places, selectedCategory, selectedRegion, selectedDifficulty, searchQuery]);
 
   const totalTrailDistance = calculateTotalTrailDistance(displayedTrail);
 
@@ -772,14 +774,20 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
         marker.openPopup();
       }
     });
+  }, [filteredPlaces, selectedPlaceId, focusedStepPlaceId, isAdmin, displayedTrail, isBuildingRoute, draftStops, mapProvider]);
 
+  // Fit the view to the filtered results only when the filters change, not on every marker rebuild.
+  useEffect(() => {
+    if (mapProvider !== 'leaflet') return;
+    const map = mapInstanceRef.current;
+    if (!map) return;
     if (filteredPlaces.length > 0 && (selectedRegion !== 'all' || searchQuery.trim() !== '')) {
       const group = L.featureGroup(
         filteredPlaces.map((p) => L.marker([p.latitude, p.longitude]))
       );
       map.fitBounds(group.getBounds().pad(0.2));
     }
-  }, [filteredPlaces, selectedPlaceId, focusedStepPlaceId, isAdmin, displayedTrail, isBuildingRoute, draftStops, mapProvider]);
+  }, [filteredPlaces, mapProvider]);
 
   useEffect(() => {
     if (mapProvider !== 'leaflet') return;
@@ -854,7 +862,12 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
     setIsSimulatingTrail(true);
 
+    // The map is torn down (map.remove()) when the component unmounts or the provider changes;
+    // stop the simulation instead of driving a removed map instance.
+    const isCancelled = () => mapInstanceRef.current !== map;
+
     for (let i = 0; i < validPlaces.length; i++) {
+      if (isCancelled()) break;
       const place = validPlaces[i];
       setActiveSimStep(i + 1);
 
@@ -865,7 +878,9 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
       const marker = markersMapRef.current.get(place.id);
       if (marker) {
-        setTimeout(() => marker.openPopup(), 650);
+        setTimeout(() => {
+          if (!isCancelled()) marker.openPopup();
+        }, 650);
       }
 
       await new Promise((res) => setTimeout(res, 2200));
@@ -873,7 +888,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
 
     setActiveSimStep(null);
     setIsSimulatingTrail(false);
-    handleFocusTrail();
+    if (!isCancelled()) handleFocusTrail();
   };
 
   const handleLocateMe = () => {
@@ -974,7 +989,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             <button
               type="button"
               onClick={() => setMapProvider('google')}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              className={`px-3.5 py-2.5 sm:px-3 sm:py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                 mapProvider === 'google'
                   ? 'bg-stone-900 text-amber-300 shadow-xs'
                   : 'text-stone-700 hover:text-stone-950'
@@ -986,7 +1001,7 @@ export const InteractiveMap: React.FC<InteractiveMapProps> = ({
             <button
               type="button"
               onClick={() => setMapProvider('leaflet')}
-              className={`px-3 py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
+              className={`px-3.5 py-2.5 sm:px-3 sm:py-1.5 rounded-full text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
                 mapProvider === 'leaflet'
                   ? 'bg-stone-900 text-amber-300 shadow-xs'
                   : 'text-stone-700 hover:text-stone-950'

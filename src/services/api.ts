@@ -10,6 +10,9 @@ import {
   ContactMessage,
   UserProfileData,
   ChatMessage,
+  AdminStats,
+  AdminReview,
+  AuditLogEntry,
 } from '../types';
 import { PLACES, CATEGORIES, REGIONS, ROUTES } from '../data/seedData';
 
@@ -155,7 +158,7 @@ export async function submitSuggestion(
 
 export async function updateSuggestionStatus(
   id: string,
-  status: 'approved' | 'rejected'
+  status: 'approved' | 'rejected' | 'pending'
 ): Promise<void> {
   const res = await fetch(`/api/suggestions/${encodeURIComponent(id)}/status`, {
     method: 'PATCH',
@@ -533,42 +536,54 @@ export async function deletePlace(id: string): Promise<void> {
 }
 
 // -------------------------------------------------------------
-// SSMS ADMIN API HELPERS
+// ADMIN: MODERATION, STATISTICS & AUDIT LOG
 // -------------------------------------------------------------
 
-export async function fetchSsmsSchema(): Promise<any> {
-  const res = await fetch('/api/ssms/schema', {
-    headers: { ...getAuthHeader() },
-  });
-  return await safeJsonParse(res, 'Грешка при зареждане на схемата.');
-}
-
-export async function runSsmsQuery(query: string): Promise<any> {
-  const res = await fetch('/api/ssms/query', {
-    method: 'POST',
+async function adminRequest<T>(
+  url: string,
+  fallbackError: string,
+  method: 'GET' | 'PATCH' | 'DELETE' = 'GET',
+  body?: unknown
+): Promise<T> {
+  const res = await fetch(url, {
+    method,
     headers: {
-      'Content-Type': 'application/json',
+      ...(body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       ...getAuthHeader(),
     },
-    body: JSON.stringify({ query }),
+    body: body !== undefined ? JSON.stringify(body) : undefined,
   });
-  return await safeJsonParse(res, 'Грешка при изпълнение на T-SQL заявката.');
+  return await safeJsonParse<T>(res, fallbackError);
 }
 
-export async function downloadSsmsSql(): Promise<void> {
-  const res = await fetch('/api/ssms/export', {
-    headers: { ...getAuthHeader() },
-  });
-  if (!res.ok) {
-    throw new Error('Необходими са администраторски права за изтегляне на SQL скрипта.');
-  }
-  const blob = await res.blob();
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = 'BulgariaTravel_SSMS.sql';
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
+export function fetchAdminStats(): Promise<AdminStats> {
+  return adminRequest('/api/admin/stats', 'Грешка при зареждане на статистиката.');
+}
+
+export function fetchAdminReviews(): Promise<AdminReview[]> {
+  return adminRequest('/api/admin/reviews', 'Грешка при зареждане на отзивите.');
+}
+
+export function deleteReview(id: string): Promise<{ message: string }> {
+  return adminRequest(`/api/reviews/${encodeURIComponent(id)}`, 'Грешка при изтриване на отзива.', 'DELETE');
+}
+
+export function fetchAuditLog(): Promise<AuditLogEntry[]> {
+  return adminRequest('/api/admin/audit-log', 'Грешка при зареждане на дневника.');
+}
+
+export function deleteSuggestion(id: string): Promise<{ message: string }> {
+  return adminRequest(`/api/suggestions/${encodeURIComponent(id)}`, 'Грешка при изтриване на предложението.', 'DELETE');
+}
+
+export function setContactMessageRead(id: string, isRead: boolean): Promise<ContactMessage> {
+  return adminRequest(`/api/contact/${encodeURIComponent(id)}`, 'Грешка при обновяване на запитването.', 'PATCH', { isRead });
+}
+
+export function deleteContactMessage(id: string): Promise<{ message: string }> {
+  return adminRequest(`/api/contact/${encodeURIComponent(id)}`, 'Грешка при изтриване на запитването.', 'DELETE');
+}
+
+export function setPlaceFeatured(id: string, isFeatured: boolean): Promise<Place> {
+  return adminRequest(`/api/places/${encodeURIComponent(id)}/featured`, 'Грешка при обновяване на обекта.', 'PATCH', { isFeatured });
 }

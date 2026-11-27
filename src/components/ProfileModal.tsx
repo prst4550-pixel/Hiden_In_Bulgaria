@@ -100,7 +100,7 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({
 
   return (
     <div className="fixed inset-0 z-50 bg-stone-950/70 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fade-in">
-      <div className="liquid-water-card w-full max-w-2xl rounded-3xl border border-white/90 shadow-2xl flex flex-col max-h-[88vh] overflow-hidden">
+      <div className="liquid-water-card w-full max-w-2xl rounded-3xl border border-white/90 shadow-2xl flex flex-col max-h-[88dvh] overflow-hidden">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-stone-200/60 bg-white/40 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">

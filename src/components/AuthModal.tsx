@@ -183,8 +183,9 @@ export const AuthModal: React.FC<AuthModalProps> = ({
   const showAdminClaimOption = Boolean(adminStatus && !adminStatus.adminClaimed && !adminStatus.envConfigured);
 
   return (
-    <div className="fixed inset-0 z-50 bg-stone-950/70 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fade-in">
-      <div className="liquid-water-card w-full max-w-md rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-white/70">
+    <div className="fixed inset-0 z-[60] bg-stone-950/70 backdrop-blur-md flex items-start justify-center overflow-y-auto overscroll-contain p-3 sm:p-6 animate-fade-in">
+      {/* my-auto centres the card when it fits and lets it scroll (instead of clipping) on short phone screens */}
+      <div className="liquid-water-card my-auto w-full max-w-md rounded-3xl shadow-2xl flex flex-col overflow-hidden border border-white/70">
         {/* Modal Header */}
         <div className="p-4 sm:p-5 border-b border-stone-200/60 bg-white/40 backdrop-blur-md flex items-center justify-between">
           <div className="flex items-center gap-3">

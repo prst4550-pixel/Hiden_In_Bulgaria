@@ -197,7 +197,7 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                     'login'
                   )
                 }
-                className="px-3.5 py-1.5 rounded-full bg-stone-900 hover:bg-stone-800 text-amber-200 font-bold text-xs cursor-pointer transition-colors"
+                className="px-4 py-2.5 sm:px-3.5 sm:py-1.5 rounded-full bg-stone-900 hover:bg-stone-800 text-amber-200 font-bold text-xs cursor-pointer transition-colors"
               >
                 Вход
               </button>
@@ -210,7 +210,7 @@ export const CommunityView: React.FC<CommunityViewProps> = ({
                     'register'
                   )
                 }
-                className="px-3.5 py-1.5 rounded-full bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold text-xs cursor-pointer transition-colors"
+                className="px-4 py-2.5 sm:px-3.5 sm:py-1.5 rounded-full bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold text-xs cursor-pointer transition-colors"
               >
                 Регистрация
               </button>

@@ -121,7 +121,7 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
           <div className="flex items-center justify-between gap-2">
             <button
               onClick={() => onLocateOnMap(place)}
-              className="btn-liquid-water water-shimmer px-3.5 py-1.5 rounded-full text-stone-800 hover:text-stone-950 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
+              className="btn-liquid-water water-shimmer px-3.5 py-2.5 sm:py-1.5 rounded-full text-stone-800 hover:text-stone-950 text-xs font-semibold flex items-center gap-1.5 cursor-pointer"
             >
               <MapPin className="w-3.5 h-3.5 text-amber-800" />
               <span>На картата</span>
@@ -129,7 +129,7 @@ export const PlaceCard: React.FC<PlaceCardProps> = ({
 
             <button
               onClick={() => onSelect(place)}
-              className="btn-liquid-dark water-shimmer px-4 py-1.5 rounded-full text-amber-200 hover:text-amber-100 text-xs font-bold flex items-center gap-1.5 group/btn cursor-pointer"
+              className="btn-liquid-dark water-shimmer px-4 py-2.5 sm:py-1.5 rounded-full text-amber-200 hover:text-amber-100 text-xs font-bold flex items-center gap-1.5 group/btn cursor-pointer"
             >
               <span>Разгледай</span>
               <ArrowUpRight className="w-3.5 h-3.5 text-amber-400 group-hover/btn:translate-x-0.5 group-hover/btn:-translate-y-0.5 transition-transform duration-300" />

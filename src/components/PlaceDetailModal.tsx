@@ -68,12 +68,21 @@ export const PlaceDetailModal: React.FC<PlaceDetailModalProps> = ({
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [queuedReviewSubmit, setQueuedReviewSubmit] = useState(false);
 
+  const placeId = place?.id;
   useEffect(() => {
-    if (place) {
-      fetchReviews(place.id).then(setReviews);
-      setReviewError(null);
-    }
-  }, [place]);
+    if (!placeId) return;
+    // Reset per-place state and ignore stale responses when switching places quickly.
+    let ignore = false;
+    setReviews([]);
+    setReviewComment('');
+    setReviewError(null);
+    fetchReviews(placeId).then((list) => {
+      if (!ignore) setReviews(list);
+    });
+    return () => {
+      ignore = true;
+    };
+  }, [placeId]);
 
   useEffect(() => {
     if (currentUser && !authorName.trim()) {
@@ -81,28 +90,27 @@ export const PlaceDetailModal: React.FC<PlaceDetailModalProps> = ({
     }
   }, [currentUser]);
 
-useEffect(() => {
-  if (currentUser && !authorName.trim()) {
-    setAuthorName(currentUser.name);
-  }
-}, [currentUser]);
+  // Process queued review after authentication. `isOpen && place` must be checked first:
+  // performReviewSubmit is declared below the early return, so referencing it in a render
+  // that returned early would throw a ReferenceError (TDZ).
+  useEffect(() => {
+    if (isOpen && place && currentUser && queuedReviewSubmit) {
+      setQueuedReviewSubmit(false);
+      void performReviewSubmit(authorName.trim() || currentUser.name);
+    }
+  }, [isOpen, place, currentUser, queuedReviewSubmit]);
 
-// Process queued review after authentication
-useEffect(() => {
-  if (currentUser && queuedReviewSubmit) {
-    setQueuedReviewSubmit(false);
-    void performReviewSubmit(authorName.trim() || currentUser.name);
-  }
-}, [currentUser, queuedReviewSubmit]);
-
-// All hooks must be above this condition
-if (!isOpen || !place) return null;
-
+  // All hooks must be above this condition
   if (!isOpen || !place) return null;
+
+  const copyToClipboard = (text: string) => {
+    // navigator.clipboard is undefined on non-secure (non-HTTPS) origins.
+    navigator.clipboard?.writeText(text).catch(() => {});
+  };
 
   const handleCopyCoords = () => {
     const coordsStr = `${place.latitude.toFixed(6)}, ${place.longitude.toFixed(6)}`;
-    navigator.clipboard.writeText(coordsStr);
+    copyToClipboard(coordsStr);
     setCopiedCoords(true);
     setTimeout(() => setCopiedCoords(false), 2000);
   };
@@ -122,7 +130,7 @@ if (!isOpen || !place) return null;
         // user cancelled or share unsupported
       }
     } else {
-      navigator.clipboard.writeText(url);
+      copyToClipboard(url);
       setSharedToast(true);
       setTimeout(() => setSharedToast(false), 2500);
     }
@@ -173,7 +181,7 @@ if (!isOpen || !place) return null;
 
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-stone-950/60 backdrop-blur-2xl flex items-center justify-center p-3 sm:p-6 animate-fade-in">
-      <div className="relative liquid-water-card w-full max-w-4xl rounded-3xl shadow-2xl overflow-hidden max-h-[92vh] flex flex-col">
+      <div className="relative liquid-water-card w-full max-w-4xl rounded-3xl shadow-2xl overflow-hidden max-h-[92dvh] flex flex-col">
         {/* Modal Top Bar - Liquid Water Header */}
         <div className="p-4 sm:px-6 border-b border-stone-200/50 flex items-center justify-between bg-white/40 backdrop-blur-xl">
           <div className="flex items-center gap-2 text-xs text-stone-600">

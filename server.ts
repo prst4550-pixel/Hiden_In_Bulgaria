@@ -12,6 +12,8 @@ import {
   Review,
   User,
   ContactMessage,
+  AuditLogEntry,
+  AdminStats,
   DifficultyLevel,
   Route,
   RouteStop,
@@ -26,16 +28,20 @@ const app = express();
 const PORT = process.env.PORT ? parseInt(process.env.PORT, 10) : 3000;
 
 app.disable('x-powered-by');
-app.set('trust proxy', 1);
+// Only trust X-Forwarded-For when actually running behind a reverse proxy; otherwise clients
+// could spoof their IP and bypass the per-IP rate limiters.
+if (process.env.TRUST_PROXY) {
+  const tp = process.env.TRUST_PROXY.trim();
+  app.set('trust proxy', /^\d+$/.test(tp) ? parseInt(tp, 10) : tp === 'true' ? true : tp);
+}
 
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'prst4550@gmail.com').trim().toLowerCase();
 const ENV_ADMIN_PASSCODE = (process.env.ADMIN_PASSCODE || '').trim();
-const DEFAULT_ADMIN_SALT =
-  (process.env.ADMIN_PASSWORD_SALT || '').trim() ||
-  '21327eb5784b344d221ab8695995d707ac190ed57560bc949d5adacbba06b7fd';
-const DEFAULT_ADMIN_SCRYPT_HASH =
-  (process.env.ADMIN_PASSWORD_HASH || '').trim() ||
-  '98e27d81549dbb27caa2bf43eddd9776193d757f599f752834137ac6d6721d04184365c119c979296c101276e12e2020d6b21573cd0924e59a7fe00342a6255b';
+// Optional pre-hashed admin credentials supplied by the operator. There is deliberately NO
+// hardcoded fallback: without ADMIN_PASSCODE / these values the admin account stays unclaimed
+// and is set up through the first-run claim form.
+const DEFAULT_ADMIN_SALT = (process.env.ADMIN_PASSWORD_SALT || '').trim();
+const DEFAULT_ADMIN_SCRYPT_HASH = (process.env.ADMIN_PASSWORD_HASH || '').trim();
 const VALID_DIFFICULTIES: DifficultyLevel[] = ['Лесен', 'Умерен', 'Труден', 'Екстремен'];
 const ALLOWED_IMAGE_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp']);
 const MAX_BASE64_IMAGE_BYTES = 8 * 1024 * 1024;
@@ -77,15 +83,6 @@ function getAllowedOrigins(req: Request): Set<string> {
   if (host) {
     allowed.add(`https://${host}`);
     allowed.add(`http://${host}`);
-  }
-
-  const referer = req.headers.referer;
-  if (typeof referer === 'string' && referer) {
-    try {
-      allowed.add(new URL(referer).origin);
-    } catch {
-      // ignore invalid referer
-    }
   }
 
   return allowed;
@@ -247,6 +244,7 @@ interface DatabaseSchema {
   users: DbUser[];
   contactMessages: ContactMessage[];
   userProfiles: Record<string, UserProfileData>;
+  auditLog: AuditLogEntry[];
 }
 
 function createSalt(): string {
@@ -279,10 +277,17 @@ function verifyPassword(password: string, user: DbUser): boolean {
 }
 
 function createAdminRecord(): DbUser {
-  const salt = ENV_ADMIN_PASSCODE ? createSalt() : DEFAULT_ADMIN_SALT;
-  const passwordHash = ENV_ADMIN_PASSCODE
-    ? hashPasswordScrypt(ENV_ADMIN_PASSCODE, salt)
-    : DEFAULT_ADMIN_SCRYPT_HASH;
+  // With neither ADMIN_PASSCODE nor operator-supplied hash/salt, the admin is created
+  // unclaimed (empty hash) and must be activated through /api/auth/claim-admin.
+  let salt = '';
+  let passwordHash = '';
+  if (ENV_ADMIN_PASSCODE) {
+    salt = createSalt();
+    passwordHash = hashPasswordScrypt(ENV_ADMIN_PASSCODE, salt);
+  } else if (DEFAULT_ADMIN_SCRYPT_HASH && DEFAULT_ADMIN_SALT) {
+    salt = DEFAULT_ADMIN_SALT;
+    passwordHash = DEFAULT_ADMIN_SCRYPT_HASH;
+  }
   return {
     id: 'usr-admin-1',
     name: 'Администратор',
@@ -307,15 +312,26 @@ function initDatabase(): DatabaseSchema {
       const content = fs.readFileSync(DB_FILE, 'utf-8');
       data = JSON.parse(content) as DatabaseSchema;
     } catch (e) {
-      console.error('Error reading existing database, re-initializing from seed:', e);
+      // Never overwrite a corrupted database with the seed: that would silently destroy all
+      // users, reviews and suggestions. Keep a backup and stop so the operator can inspect it.
+      const backup = `${DB_FILE}.corrupt-${Date.now()}`;
+      try {
+        fs.copyFileSync(DB_FILE, backup);
+      } catch {
+        // ignore backup failure
+      }
+      console.error(`Failed to parse ${DB_FILE} (backup at ${backup}). Refusing to start.`, e);
+      process.exit(1);
     }
   }
 
-  if (data && Array.isArray(data.places) && data.places.length > 0) {
+  if (data && typeof data === 'object') {
+    if (!Array.isArray(data.places)) data.places = PLACES;
     if (!Array.isArray(data.users)) data.users = [];
     if (!Array.isArray(data.suggestions)) data.suggestions = [];
     if (!Array.isArray(data.reviews)) data.reviews = [];
     if (!Array.isArray(data.contactMessages)) data.contactMessages = [];
+    if (!Array.isArray(data.auditLog)) data.auditLog = [];
     if (!data.userProfiles || typeof data.userProfiles !== 'object' || Array.isArray(data.userProfiles)) {
       data.userProfiles = {};
     }
@@ -334,29 +350,37 @@ function initDatabase(): DatabaseSchema {
       data.users.unshift(createAdminRecord());
     } else {
       primaryAdmin.id = primaryAdmin.id || 'usr-admin-1';
-      primaryAdmin.email = ADMIN_EMAIL;
+      const emailOwner = data.users.find(
+        (u) => u !== primaryAdmin && u.email.toLowerCase() === ADMIN_EMAIL
+      );
+      if (emailOwner) {
+        // Do not delete a real user just because their email matches ADMIN_EMAIL.
+        console.warn(
+          `ADMIN_EMAIL (${ADMIN_EMAIL}) already belongs to user ${emailOwner.id}; keeping the admin's current email.`
+        );
+      } else {
+        primaryAdmin.email = ADMIN_EMAIL;
+      }
       primaryAdmin.role = 'admin';
       primaryAdmin.status = 'active';
-      if (!primaryAdmin.passwordHash || !primaryAdmin.salt) {
-        if (ENV_ADMIN_PASSCODE) {
+      if (ENV_ADMIN_PASSCODE) {
+        // Apply ADMIN_PASSCODE whenever it doesn't match the stored hash, so setting/changing
+        // it after the first boot actually takes effect.
+        if (!verifyPassword(ENV_ADMIN_PASSCODE, primaryAdmin)) {
           const salt = createSalt();
           primaryAdmin.salt = salt;
           primaryAdmin.passwordHash = hashPasswordScrypt(ENV_ADMIN_PASSCODE, salt);
-        } else {
-          primaryAdmin.salt = DEFAULT_ADMIN_SALT;
-          primaryAdmin.passwordHash = DEFAULT_ADMIN_SCRYPT_HASH;
+          primaryAdmin.hashAlgorithm = 'scrypt';
         }
+      } else if ((!primaryAdmin.passwordHash || !primaryAdmin.salt) && DEFAULT_ADMIN_SCRYPT_HASH && DEFAULT_ADMIN_SALT) {
+        primaryAdmin.salt = DEFAULT_ADMIN_SALT;
+        primaryAdmin.passwordHash = DEFAULT_ADMIN_SCRYPT_HASH;
         primaryAdmin.hashAlgorithm = 'scrypt';
       }
-      data.users = [
-        primaryAdmin,
-        ...data.users.filter(
-          (u) => u !== primaryAdmin && u.email.toLowerCase() !== ADMIN_EMAIL
-        ),
-      ];
+      data.users = [primaryAdmin, ...data.users.filter((u) => u !== primaryAdmin)];
     }
 
-    fs.writeFileSync(DB_FILE, JSON.stringify(data, null, 2), 'utf-8');
+    writeFileAtomic(DB_FILE, JSON.stringify(data, null, 2));
     return data;
   }
 
@@ -416,18 +440,26 @@ function initDatabase(): DatabaseSchema {
     ],
     users: [createAdminRecord()],
     contactMessages: [],
+    auditLog: [],
     userProfiles: {},
   };
 
-  fs.writeFileSync(DB_FILE, JSON.stringify(initialData, null, 2), 'utf-8');
+  writeFileAtomic(DB_FILE, JSON.stringify(initialData, null, 2));
   return initialData;
+}
+
+// Write to a temp file then rename, so a crash mid-write can't leave a truncated database.
+function writeFileAtomic(file: string, content: string) {
+  const tmp = `${file}.tmp`;
+  fs.writeFileSync(tmp, content, 'utf-8');
+  fs.renameSync(tmp, file);
 }
 
 let db = initDatabase();
 
 function saveDatabase() {
   try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
+    writeFileAtomic(DB_FILE, JSON.stringify(db, null, 2));
   } catch (err) {
     console.error('Failed to persist database:', err);
   }
@@ -614,6 +646,21 @@ function requireAdmin(req: Request, res: Response, next: NextFunction) {
   next();
 }
 
+const AUDIT_LOG_LIMIT = 500;
+
+// Records an admin action. Call before saveDatabase() in admin routes.
+function recordAudit(res: Response, action: string, details: string) {
+  const admin = res.locals.currentUser as DbUser | undefined;
+  db.auditLog.unshift({
+    id: 'log-' + crypto.randomUUID(),
+    action,
+    details,
+    adminEmail: admin?.email || 'system',
+    createdAt: new Date().toISOString(),
+  });
+  if (db.auditLog.length > AUDIT_LOG_LIMIT) db.auditLog.length = AUDIT_LOG_LIMIT;
+}
+
 function getOrCreateUserProfile(userId: string): UserProfileData {
   if (!db.userProfiles || typeof db.userProfiles !== 'object') {
     db.userProfiles = {};
@@ -761,7 +808,7 @@ app.post('/api/reviews', requireAuth, writeRateLimiter, (req: Request, res: Resp
   }
 
   const newReview: Review = {
-    id: 'rev-' + Date.now(),
+    id: 'rev-' + crypto.randomUUID(),
     placeId: cleanPlaceId,
     author: cleanAuthor,
     userId: authUser.id,
@@ -834,7 +881,7 @@ app.post('/api/suggestions', requireAuth, writeRateLimiter, (req: Request, res: 
 
   const authUser = res.locals.currentUser as DbUser;
   const newSuggestion: CommunitySuggestion = {
-    id: 'sugg-' + Date.now(),
+    id: 'sugg-' + crypto.randomUUID(),
     name: cleanName,
     region: cleanRegion,
     category: cleanCategory,
@@ -872,7 +919,15 @@ app.patch('/api/suggestions/:id/status', requireAdmin, (req: Request, res: Respo
     return res.status(404).json({ error: 'Предложението не е намерено' });
   }
 
+  const previousStatus = item.status;
   item.status = status;
+
+  if (previousStatus === 'approved' && status !== 'approved' && item.placeId) {
+    // Un-approving removes the place that the approval added to the public catalog.
+    const placeIdx = db.places.findIndex((p) => p.id === item.placeId);
+    if (placeIdx !== -1) db.places.splice(placeIdx, 1);
+    item.placeId = undefined;
+  }
 
   if (status === 'approved') {
     const existing = db.places.find((p) => p.name.toLowerCase() === item.name.toLowerCase());
@@ -890,7 +945,7 @@ app.patch('/api/suggestions/:id/status', requireAdmin, (req: Request, res: Respo
           item.category.toLowerCase().includes(c.name.toLowerCase())
       );
       const newPlace: Place = {
-        id: 'place-' + Date.now(),
+        id: 'place-' + crypto.randomUUID(),
         name: item.name,
         slug: slugify(item.name),
         regionId: matchedRegion?.id || 'south_central',
@@ -913,9 +968,16 @@ app.patch('/api/suggestions/:id/status', requireAdmin, (req: Request, res: Respo
         isFeatured: false,
       };
       db.places.push(newPlace);
+      item.placeId = newPlace.id;
     }
   }
 
+  const statusLabel: Record<string, string> = { pending: 'чака преглед', approved: 'одобрено', rejected: 'отхвърлено' };
+  recordAudit(
+    res,
+    'suggestion.status',
+    `„${item.name}“: ${statusLabel[previousStatus]} → ${statusLabel[status]}`
+  );
   saveDatabase();
   res.json({ message: `Статусът беше обновен на ${status}`, suggestion: item });
 });
@@ -941,7 +1003,7 @@ app.post('/api/contact', writeRateLimiter, (req: Request, res: Response) => {
   }
 
   const entry: ContactMessage = {
-    id: 'msg-' + Date.now(),
+    id: 'msg-' + crypto.randomUUID(),
     name: cleanName,
     email: cleanEmail,
     subject: cleanSubject,
@@ -963,6 +1025,123 @@ app.post('/api/contact', writeRateLimiter, (req: Request, res: Response) => {
 
 app.get('/api/contact', requireAdmin, (_req: Request, res: Response) => {
   res.json(db.contactMessages);
+});
+
+app.patch('/api/contact/:id', requireAdmin, (req: Request, res: Response) => {
+  const msg = db.contactMessages.find((m) => m.id === req.params.id);
+  if (!msg) {
+    return res.status(404).json({ error: 'Запитването не е намерено.' });
+  }
+  msg.isRead = Boolean((req.body || {}).isRead);
+  saveDatabase();
+  res.json(msg);
+});
+
+app.delete('/api/contact/:id', requireAdmin, (req: Request, res: Response) => {
+  const idx = db.contactMessages.findIndex((m) => m.id === req.params.id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Запитването не е намерено.' });
+  }
+  const [removed] = db.contactMessages.splice(idx, 1);
+  recordAudit(res, 'message.delete', `„${removed.subject}“ от ${removed.email}`);
+  saveDatabase();
+  res.json({ message: 'Запитването беше изтрито.' });
+});
+
+app.delete('/api/suggestions/:id', requireAdmin, (req: Request, res: Response) => {
+  const idx = db.suggestions.findIndex((s) => s.id === req.params.id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Предложението не е намерено' });
+  }
+  const [removed] = db.suggestions.splice(idx, 1);
+  recordAudit(res, 'suggestion.delete', `„${removed.name}“`);
+  saveDatabase();
+  res.json({ message: `Предложението „${removed.name}“ беше изтрито.` });
+});
+
+// -------------------------------------------------------------
+// ADMIN: REVIEWS MODERATION, STATISTICS & AUDIT LOG
+// -------------------------------------------------------------
+
+function recalcPlaceRating(placeId: string) {
+  const place = db.places.find((p) => p.id === placeId);
+  if (!place) return;
+  const placeReviews = db.reviews.filter((r) => r.placeId === placeId);
+  place.reviewCount = placeReviews.length;
+  place.rating = placeReviews.length
+    ? Number((placeReviews.reduce((sum, r) => sum + r.rating, 0) / placeReviews.length).toFixed(1))
+    : undefined;
+}
+
+app.get('/api/admin/reviews', requireAdmin, (_req: Request, res: Response) => {
+  const names = new Map(db.places.map((p) => [p.id, p.name]));
+  res.json(
+    db.reviews.map((r) => ({ ...r, placeName: names.get(r.placeId) || 'Изтрит обект' }))
+  );
+});
+
+app.delete('/api/reviews/:id', requireAdmin, (req: Request, res: Response) => {
+  const idx = db.reviews.findIndex((r) => r.id === req.params.id);
+  if (idx === -1) {
+    return res.status(404).json({ error: 'Отзивът не е намерен.' });
+  }
+  const [removed] = db.reviews.splice(idx, 1);
+  recalcPlaceRating(removed.placeId);
+  const placeName = db.places.find((p) => p.id === removed.placeId)?.name || removed.placeId;
+  recordAudit(res, 'review.delete', `${removed.author} за „${placeName}“`);
+  saveDatabase();
+  res.json({ message: 'Отзивът беше изтрит.' });
+});
+
+app.get('/api/admin/stats', requireAdmin, (_req: Request, res: Response) => {
+  const since = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const countBy = (values: string[]) => {
+    const m = new Map<string, number>();
+    values.forEach((v) => m.set(v, (m.get(v) || 0) + 1));
+    return [...m.entries()].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count);
+  };
+  const favoriteCounts = new Map<string, number>();
+  Object.values(db.userProfiles || {}).forEach((profile) =>
+    (profile.favorites || []).forEach((id) => favoriteCounts.set(id, (favoriteCounts.get(id) || 0) + 1))
+  );
+  const placeName = new Map(db.places.map((p) => [p.id, p.name]));
+  const avg = db.reviews.length
+    ? Number((db.reviews.reduce((s, r) => s + r.rating, 0) / db.reviews.length).toFixed(2))
+    : null;
+
+  const stats: AdminStats = {
+    totals: {
+      places: db.places.length,
+      featuredPlaces: db.places.filter((p) => p.isFeatured).length,
+      users: db.users.length,
+      blockedUsers: db.users.filter((u) => u.status === 'blocked').length,
+      reviews: db.reviews.length,
+      averageRating: avg,
+      pendingSuggestions: db.suggestions.filter((s) => s.status === 'pending').length,
+      suggestions: db.suggestions.length,
+      messages: db.contactMessages.length,
+      unreadMessages: db.contactMessages.filter((m) => !m.isRead).length,
+    },
+    placesByCategory: countBy(db.places.map((p) => p.categoryName)),
+    placesByRegion: countBy(db.places.map((p) => p.regionName.split('(')[0].trim())),
+    topRatedPlaces: db.places
+      .filter((p) => (p.reviewCount || 0) > 0)
+      .sort((a, b) => (b.rating || 0) - (a.rating || 0) || (b.reviewCount || 0) - (a.reviewCount || 0))
+      .slice(0, 5)
+      .map((p) => ({ id: p.id, name: p.name, rating: p.rating || 0, reviewCount: p.reviewCount || 0 })),
+    mostFavoritedPlaces: [...favoriteCounts.entries()]
+      .filter(([id]) => placeName.has(id))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5)
+      .map(([id, count]) => ({ id, name: placeName.get(id) as string, count })),
+    registrationsLast30Days: db.users.filter((u) => new Date(u.createdAt).getTime() >= since).length,
+    reviewsLast30Days: db.reviews.filter((r) => new Date(r.createdAt).getTime() >= since).length,
+  };
+  res.json(stats);
+});
+
+app.get('/api/admin/audit-log', requireAdmin, (_req: Request, res: Response) => {
+  res.json(db.auditLog.slice(0, 200));
 });
 
 // -------------------------------------------------------------
@@ -1057,7 +1236,7 @@ app.post('/api/auth/register', authRateLimiter, (req: Request, res: Response) =>
 
   const salt = createSalt();
   const newUser: DbUser = {
-    id: 'usr-' + Date.now(),
+    id: 'usr-' + crypto.randomUUID(),
     name: cleanName,
     email: cleanEmail,
     passwordHash: hashPasswordScrypt(rawPassword, salt),
@@ -1170,6 +1349,11 @@ app.patch('/api/users/:id/status', requireAdmin, (req: Request, res: Response) =
   if (status === 'blocked') {
     revokeUserSessions(targetUser.id);
   }
+  recordAudit(
+    res,
+    status === 'blocked' ? 'user.block' : 'user.unblock',
+    `${targetUser.name} (${targetUser.email})`
+  );
   saveDatabase();
 
   res.json({
@@ -1202,6 +1386,7 @@ app.delete('/api/users/:id', requireAdmin, (req: Request, res: Response) => {
     delete db.userProfiles[targetId];
   }
   revokeUserSessions(targetId);
+  recordAudit(res, 'user.delete', `${targetUser.name} (${targetUser.email})`);
   saveDatabase();
 
   res.json({
@@ -1475,7 +1660,7 @@ app.post('/api/places', requireAdmin, (req: Request, res: Response) => {
       : undefined;
 
   const newPlace: Place = {
-    id: 'place-' + Date.now(),
+    id: 'place-' + crypto.randomUUID(),
     name: cleanName,
     slug: slugify(cleanName),
     regionId: matchedRegion?.id || 'south_central',
@@ -1502,6 +1687,7 @@ app.post('/api/places', requireAdmin, (req: Request, res: Response) => {
   };
 
   db.places.unshift(newPlace);
+  recordAudit(res, 'place.create', `„${newPlace.name}“`);
   saveDatabase();
   res.status(201).json(newPlace);
 });
@@ -1583,6 +1769,7 @@ app.put('/api/places/:id', requireAdmin, (req: Request, res: Response) => {
   };
 
   db.places[idx] = updated;
+  recordAudit(res, 'place.update', `„${updated.name}“`);
   saveDatabase();
   res.json(updated);
 });
@@ -1595,361 +1782,20 @@ app.delete('/api/places/:id', requireAdmin, (req: Request, res: Response) => {
   }
 
   const deleted = db.places.splice(idx, 1)[0];
+  recordAudit(res, 'place.delete', `„${deleted.name}“`);
   saveDatabase();
   res.json({ message: `Обектът "${deleted.name}" беше изтрит успешно.` });
 });
 
-// -------------------------------------------------------------
-// MICROSOFT SQL SERVER / SSMS INTEGRATION ENDPOINTS (ADMIN ONLY)
-// -------------------------------------------------------------
-
-app.get('/api/ssms/export', requireAdmin, (_req: Request, res: Response) => {
-  const ssmsFilePath = path.resolve(DATA_DIR, 'BulgariaTravel_SSMS.sql');
-  if (!fs.existsSync(ssmsFilePath)) {
-    return res.status(404).json({ error: 'SSMS T-SQL скриптът все още не е генериран.' });
+app.patch('/api/places/:id/featured', requireAdmin, (req: Request, res: Response) => {
+  const place = db.places.find((p) => p.id === req.params.id || p.slug === req.params.id);
+  if (!place) {
+    return res.status(404).json({ error: 'Обектът не е намерен.' });
   }
-
-  res.setHeader('Content-Type', 'application/sql; charset=utf-8');
-  res.setHeader('Content-Disposition', 'attachment; filename="BulgariaTravel_SSMS.sql"');
-  const fileStream = fs.createReadStream(ssmsFilePath);
-  fileStream.pipe(res);
-});
-
-app.get('/api/ssms/schema', requireAdmin, (_req: Request, res: Response) => {
-  const ssmsFilePath = path.resolve(DATA_DIR, 'BulgariaTravel_SSMS.sql');
-  const fileStats = fs.existsSync(ssmsFilePath) ? fs.statSync(ssmsFilePath) : null;
-
-  res.json({
-    databaseName: 'BulgariaTravel',
-    databaseClient: 'Microsoft SQL Server Management Studio (SSMS 18 / 19 / 20)',
-    compatibility: 'Microsoft SQL Server 2017+, 2019, 2022, Azure SQL',
-    collation: 'Cyrillic_General_100_CI_AI_SC_UTF8',
-    fileSizeKb: fileStats ? +(fileStats.size / 1024).toFixed(1) : 0,
-    connectionStrings: {
-      windowsAuth:
-        'Server=localhost;Database=BulgariaTravel;Trusted_Connection=True;TrustServerCertificate=True;',
-      localDb: 'Server=(localdb)\\MSSQLLocalDB;Database=BulgariaTravel;Trusted_Connection=True;',
-      sqlAuth:
-        'Server=localhost,1433;Database=BulgariaTravel;User Id=sa;Password=<SQL_PASSWORD>;TrustServerCertificate=True;',
-      efCore:
-        'Server=localhost;Database=BulgariaTravel;Trusted_Connection=True;TrustServerCertificate=True;MultipleActiveResultSets=true',
-    },
-    tables: [
-      {
-        name: 'dbo.Places',
-        rowCount: db.places.length,
-        description:
-          'Основни географски и исторически локации с пространствени координати и T-SQL GEOGRAPHY тип.',
-        columns: [
-          { name: 'PlaceId', type: 'NVARCHAR(50)', isPk: true, nullable: false },
-          { name: 'Name', type: 'NVARCHAR(200)', isPk: false, nullable: false },
-          { name: 'Slug', type: 'NVARCHAR(200)', isPk: false, nullable: false },
-          { name: 'CategoryId', type: 'NVARCHAR(50)', isFk: true, nullable: false },
-          { name: 'RegionId', type: 'NVARCHAR(50)', isFk: true, nullable: false },
-          { name: 'Latitude', type: 'FLOAT', isPk: false, nullable: false },
-          { name: 'Longitude', type: 'FLOAT', isPk: false, nullable: false },
-          { name: 'GeoLocation', type: 'GEOGRAPHY', isPk: false, nullable: true },
-          { name: 'ElevationMeters', type: 'INT', isPk: false, nullable: false },
-          { name: 'Difficulty', type: 'NVARCHAR(50)', isPk: false, nullable: false },
-          { name: 'ShortDescription', type: 'NVARCHAR(1000)', isPk: false, nullable: false },
-          { name: 'FullDescription', type: 'NVARCHAR(MAX)', isPk: false, nullable: false },
-          { name: 'HistoricalContext', type: 'NVARCHAR(MAX)', isPk: false, nullable: true },
-          { name: 'ImageUrl', type: 'NVARCHAR(500)', isPk: false, nullable: false },
-          { name: 'IsFeatured', type: 'BIT', isPk: false, nullable: false },
-        ],
-      },
-      {
-        name: 'dbo.Categories',
-        rowCount: CATEGORIES.length,
-        description: 'Категории на обектите (светилища, крепости, водопади, пещери, села, феномени).',
-        columns: [
-          { name: 'CategoryId', type: 'NVARCHAR(50)', isPk: true, nullable: false },
-          { name: 'Name', type: 'NVARCHAR(100)', isPk: false, nullable: false },
-          { name: 'Slug', type: 'NVARCHAR(100)', isPk: false, nullable: false },
-          { name: 'Description', type: 'NVARCHAR(500)', isPk: false, nullable: true },
-          { name: 'Icon', type: 'NVARCHAR(50)', isPk: false, nullable: true },
-        ],
-      },
-      {
-        name: 'dbo.Regions',
-        rowCount: REGIONS.length,
-        description: 'Шестте географски региона на България с гранични координати.',
-        columns: [
-          { name: 'RegionId', type: 'NVARCHAR(50)', isPk: true, nullable: false },
-          { name: 'Name', type: 'NVARCHAR(100)', isPk: false, nullable: false },
-          { name: 'Description', type: 'NVARCHAR(500)', isPk: false, nullable: true },
-          { name: 'BoundNorth', type: 'FLOAT', isPk: false, nullable: true },
-          { name: 'BoundSouth', type: 'FLOAT', isPk: false, nullable: true },
-          { name: 'BoundEast', type: 'FLOAT', isPk: false, nullable: true },
-          { name: 'BoundWest', type: 'FLOAT', isPk: false, nullable: true },
-        ],
-      },
-      {
-        name: 'dbo.Routes',
-        rowCount: ROUTES.length,
-        description: 'Експедиционни маршрути, свързващи множество исторически обекти.',
-        columns: [
-          { name: 'RouteId', type: 'NVARCHAR(50)', isPk: true, nullable: false },
-          { name: 'Title', type: 'NVARCHAR(200)', isPk: false, nullable: false },
-          { name: 'Slug', type: 'NVARCHAR(200)', isPk: false, nullable: false },
-          { name: 'RegionId', type: 'NVARCHAR(50)', isFk: true, nullable: false },
-          { name: 'Difficulty', type: 'NVARCHAR(50)', isPk: false, nullable: false },
-          { name: 'DurationHours', type: 'FLOAT', isPk: false, nullable: false },
-          { name: 'DistanceKm', type: 'FLOAT', isPk: false, nullable: false },
-        ],
-      },
-      {
-        name: 'dbo.Users',
-        rowCount: db.users.length,
-        description: 'Потребители на системата и куратори с криптографски защитени пароли.',
-        columns: [
-          { name: 'UserId', type: 'NVARCHAR(50)', isPk: true, nullable: false },
-          { name: 'Email', type: 'NVARCHAR(200)', isPk: false, nullable: false },
-          { name: 'FullName', type: 'NVARCHAR(100)', isPk: false, nullable: false },
-          { name: 'Role', type: 'NVARCHAR(20)', isPk: false, nullable: false },
-          { name: 'CreatedAt', type: 'DATETIME2(3)', isPk: false, nullable: false },
-        ],
-      },
-      {
-        name: 'dbo.Reviews',
-        rowCount: db.reviews.length,
-        description: 'Автентични отзиви и оценки от теренни посещения.',
-        columns: [
-          { name: 'ReviewId', type: 'NVARCHAR(50)', isPk: true, nullable: false },
-          { name: 'PlaceId', type: 'NVARCHAR(50)', isFk: true, nullable: false },
-          { name: 'Author', type: 'NVARCHAR(100)', isPk: false, nullable: false },
-          { name: 'Rating', type: 'INT', isPk: false, nullable: false },
-          { name: 'Comment', type: 'NVARCHAR(MAX)', isPk: false, nullable: false },
-        ],
-      },
-    ],
-    views: [
-      {
-        name: 'dbo.vw_PlacesDetailed',
-        description: 'Обединява обектите с имената на техните категории и региони, плюс брой отзиви.',
-      },
-      { name: 'dbo.vw_FeaturedDestinations', description: 'Филтрира само препоръчаните дестинации.' },
-      {
-        name: 'dbo.vw_RegionalStatistics',
-        description: 'Аналитичен изглед: брой обекти, минимална/максимална/средна надморска височина по региони.',
-      },
-    ],
-    storedProcedures: [
-      {
-        name: 'dbo.usp_FindNearbyPlaces',
-        params: '@Latitude FLOAT, @Longitude FLOAT, @RadiusKm FLOAT = 25.0',
-        description: 'Използва native SQL Server GEOGRAPHY пространствен индекс за намиране на обекти в радиус.',
-      },
-      {
-        name: 'dbo.usp_SearchCatalog',
-        params: '@SearchTerm NVARCHAR(100), @CategoryId NVARCHAR(50), @RegionId NVARCHAR(50)',
-        description: 'Търсене в каталога по ключова дума и филтри.',
-      },
-    ],
-  });
-});
-
-app.post('/api/ssms/query', requireAdmin, (req: Request, res: Response) => {
-  const { query } = req.body || {};
-  if (!query || typeof query !== 'string' || query.length > 4000) {
-    return res.status(400).json({ error: 'Липсва валидна T-SQL заявка.' });
-  }
-
-  const cleanQuery = query.trim().replace(/;+$/, '');
-  const startTime = Date.now();
-
-  try {
-    let rows: Record<string, unknown>[] = [];
-    let columns: string[] = [];
-
-    const lowerQ = cleanQuery.toLowerCase();
-
-    if (lowerQ.includes('vw_regionalstatistics')) {
-      columns = [
-        'RegionId',
-        'RegionName',
-        'TotalPlaces',
-        'MinElevation',
-        'MaxElevation',
-        'AvgElevation',
-        'FeaturedPlacesCount',
-      ];
-      rows = REGIONS.map((r) => {
-        const pInR = db.places.filter((p) => p.regionId === r.id);
-        const elevations = pInR.map((p) => p.elevationMeters || p.altitude || 0);
-        return {
-          RegionId: r.id,
-          RegionName: r.name,
-          TotalPlaces: pInR.length,
-          MinElevation: elevations.length ? Math.min(...elevations) : 0,
-          MaxElevation: elevations.length ? Math.max(...elevations) : 0,
-          AvgElevation: elevations.length
-            ? Math.round(elevations.reduce((a, b) => a + b, 0) / elevations.length)
-            : 0,
-          FeaturedPlacesCount: pInR.filter((p) => p.isFeatured).length,
-        };
-      });
-    } else if (lowerQ.includes('vw_featureddestinations')) {
-      columns = ['PlaceId', 'PlaceName', 'CategoryName', 'RegionName', 'ElevationMeters', 'Difficulty', 'ImageUrl'];
-      rows = db.places
-        .filter((p) => p.isFeatured)
-        .map((p) => ({
-          PlaceId: p.id,
-          PlaceName: p.name,
-          CategoryName: p.categoryName,
-          RegionName: p.regionName,
-          ElevationMeters: p.elevationMeters || p.altitude || 0,
-          Difficulty: p.difficulty,
-          ImageUrl: p.imageUrl,
-        }));
-    } else if (lowerQ.includes('categories')) {
-      columns = ['CategoryId', 'Name', 'Slug', 'Description', 'Icon'];
-      rows = CATEGORIES.map((c) => ({
-        CategoryId: c.id,
-        Name: c.name,
-        Slug: c.slug || c.id,
-        Description: c.description,
-        Icon: c.icon || c.iconName,
-      }));
-    } else if (lowerQ.includes('regions')) {
-      columns = ['RegionId', 'Name', 'Description', 'BoundNorth', 'BoundSouth', 'BoundEast', 'BoundWest'];
-      rows = REGIONS.map((r) => ({
-        RegionId: r.id,
-        Name: r.name,
-        Description: r.description,
-        BoundNorth: r.bounds?.north ?? r.centerCoordinates[0] + 0.5,
-        BoundSouth: r.bounds?.south ?? r.centerCoordinates[0] - 0.5,
-        BoundEast: r.bounds?.east ?? r.centerCoordinates[1] + 0.5,
-        BoundWest: r.bounds?.west ?? r.centerCoordinates[1] - 0.5,
-      }));
-    } else if (lowerQ.includes('routes')) {
-      columns = ['RouteId', 'Title', 'Slug', 'RegionId', 'Difficulty', 'DurationHours', 'DistanceKm'];
-      rows = ROUTES.map((rt) => ({
-        RouteId: rt.id,
-        Title: rt.title,
-        Slug: rt.slug || rt.id,
-        RegionId: rt.regionId || 'south_central',
-        Difficulty: rt.difficulty,
-        DurationHours: rt.durationHours || 6.0,
-        DistanceKm: rt.distanceKm || 30.0,
-      }));
-    } else if (lowerQ.includes('reviews')) {
-      columns = ['ReviewId', 'PlaceId', 'Author', 'Rating', 'Comment', 'VisitSeason'];
-      rows = db.reviews.map((rv) => ({
-        ReviewId: rv.id,
-        PlaceId: rv.placeId,
-        Author: rv.author,
-        Rating: rv.rating,
-        Comment: rv.comment,
-        VisitSeason: rv.visitSeason,
-      }));
-    } else if (lowerQ.includes('users')) {
-      columns = ['UserId', 'Email', 'FullName', 'Role', 'CreatedAt'];
-      rows = db.users.map((u) => ({
-        UserId: u.id,
-        Email: u.email,
-        FullName: u.name,
-        Role: u.role,
-        CreatedAt: u.createdAt,
-      }));
-    } else if (lowerQ.includes('count(*)')) {
-      columns = ['TotalCount'];
-      rows = [{ TotalCount: db.places.length }];
-    } else {
-      let filtered = [...db.places];
-
-      if (
-        lowerQ.includes("regionid = 'south_central'") ||
-        lowerQ.includes("regionid = 'rhodopes'") ||
-        lowerQ.includes('родопи')
-      ) {
-        filtered = filtered.filter((p) => p.regionId === 'south_central');
-      } else if (
-        lowerQ.includes("regionid = 'north_central'") ||
-        lowerQ.includes("regionid = 'danube-balkan'")
-      ) {
-        filtered = filtered.filter((p) => p.regionId === 'north_central');
-      } else if (lowerQ.includes("regionid = 'northwest'")) {
-        filtered = filtered.filter((p) => p.regionId === 'northwest');
-      } else if (lowerQ.includes("regionid = 'northeast'")) {
-        filtered = filtered.filter((p) => p.regionId === 'northeast');
-      } else if (lowerQ.includes("regionid = 'southeast'")) {
-        filtered = filtered.filter((p) => p.regionId === 'southeast');
-      } else if (lowerQ.includes("regionid = 'southwest'")) {
-        filtered = filtered.filter((p) => p.regionId === 'southwest');
-      }
-
-      if (lowerQ.includes("categoryid = 'sanctuaries'")) {
-        filtered = filtered.filter((p) => p.categoryId === 'sanctuaries');
-      } else if (lowerQ.includes("categoryid = 'waterfalls'") || lowerQ.includes("categoryid = 'canyons'")) {
-        filtered = filtered.filter((p) => p.categoryId === 'waterfalls');
-      } else if (lowerQ.includes("categoryid = 'fortresses'")) {
-        filtered = filtered.filter((p) => p.categoryId === 'fortresses');
-      } else if (lowerQ.includes("categoryid = 'caves'")) {
-        filtered = filtered.filter((p) => p.categoryId === 'caves');
-      } else if (lowerQ.includes("categoryid = 'villages'")) {
-        filtered = filtered.filter((p) => p.categoryId === 'villages');
-      } else if (lowerQ.includes("categoryid = 'monasteries'")) {
-        filtered = filtered.filter((p) => p.categoryId === 'monasteries');
-      }
-
-      if (lowerQ.includes('isfeatured = 1')) {
-        filtered = filtered.filter((p) => p.isFeatured);
-      }
-
-      if (lowerQ.includes('order by elevationmeters desc')) {
-        filtered.sort((a, b) => (b.elevationMeters || b.altitude || 0) - (a.elevationMeters || a.altitude || 0));
-      }
-
-      const topMatch = cleanQuery.match(/top\s+(\d+)/i);
-      if (topMatch) {
-        const limit = Math.max(1, Math.min(200, parseInt(topMatch[1], 10)));
-        filtered = filtered.slice(0, limit);
-      }
-
-      columns = [
-        'PlaceId',
-        'Name',
-        'CategoryName',
-        'RegionName',
-        'Latitude',
-        'Longitude',
-        'ElevationMeters',
-        'Difficulty',
-        'IsFeatured',
-        'ImageUrl',
-      ];
-      rows = filtered.map((p) => ({
-        PlaceId: p.id,
-        Name: p.name,
-        CategoryName: p.categoryName,
-        RegionName: p.regionName,
-        Latitude: p.latitude,
-        Longitude: p.longitude,
-        ElevationMeters: p.elevationMeters || p.altitude || 0,
-        Difficulty: p.difficulty,
-        IsFeatured: p.isFeatured ? 1 : 0,
-        ImageUrl: p.imageUrl,
-      }));
-    }
-
-    const executionTimeMs = Math.max(1, Date.now() - startTime);
-
-    res.json({
-      success: true,
-      columns,
-      rows,
-      rowCount: rows.length,
-      executionTimeMs,
-      messages: `Заявката се изпълни успешно. (${rows.length} реда върнати) Време за изпълнение: ${executionTimeMs} ms.`,
-    });
-  } catch (err: any) {
-    res.status(500).json({
-      success: false,
-      error: err.message || 'Грешка при изпълнение на T-SQL заявка.',
-      messages: `Msg 50000, Level 16, State 1: ${err.message || 'Синтактична или транзакционна грешка в T-SQL.'}`,
-    });
-  }
+  place.isFeatured = Boolean((req.body || {}).isFeatured);
+  recordAudit(res, place.isFeatured ? 'place.feature' : 'place.unfeature', `„${place.name}“`);
+  saveDatabase();
+  res.json(place);
 });
 
 // -------------------------------------------------------------

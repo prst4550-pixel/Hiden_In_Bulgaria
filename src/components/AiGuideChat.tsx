@@ -199,13 +199,20 @@ export const AiGuideChat: React.FC<AiGuideChatProps> = ({
       : [createDefaultGuideWelcome()]
   );
 
+  // Latest messages, readable synchronously. A message queued before login is sent in the same
+  // commit in which the profile history arrives; reading `messages` from that render's closure
+  // would see only the guest welcome card and overwrite the saved history on the server.
+  const messagesRef = useRef(messages);
+  messagesRef.current = messages;
+
   // Sync when switching profiles / logging in or out
   useEffect(() => {
-    if (persistedMessages && persistedMessages.length > 0) {
-      setMessages(persistedMessages);
-    } else {
-      setMessages([createDefaultGuideWelcome()]);
-    }
+    const next =
+      persistedMessages && persistedMessages.length > 0
+        ? persistedMessages
+        : [createDefaultGuideWelcome()];
+    messagesRef.current = next;
+    setMessages(next);
   }, [currentUser?.id, persistedMessages]);
 
   const [input, setInput] = useState('');
@@ -243,6 +250,7 @@ export const AiGuideChat: React.FC<AiGuideChatProps> = ({
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  const cameraRequestIdRef = useRef(0);
 
   // Initialize Web Speech Recognition
   useEffect(() => {
@@ -438,6 +446,8 @@ export const AiGuideChat: React.FC<AiGuideChatProps> = ({
   };
 
   const stopCameraStream = () => {
+    // Invalidate any getUserMedia request still waiting on the permission prompt.
+    cameraRequestIdRef.current += 1;
     if (cameraStreamRef.current) {
       cameraStreamRef.current.getTracks().forEach((track) => track.stop());
       cameraStreamRef.current = null;
@@ -456,6 +466,7 @@ export const AiGuideChat: React.FC<AiGuideChatProps> = ({
 
   const startCameraStream = async (facing: 'environment' | 'user') => {
     stopCameraStream();
+    const requestId = cameraRequestIdRef.current;
     setCameraError(null);
     setIsStartingCamera(true);
 
@@ -479,6 +490,11 @@ export const AiGuideChat: React.FC<AiGuideChatProps> = ({
         stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       }
 
+      if (requestId !== cameraRequestIdRef.current) {
+        // The camera modal was closed (or a newer request started) while waiting: release it.
+        stream.getTracks().forEach((track) => track.stop());
+        return;
+      }
       cameraStreamRef.current = stream;
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
@@ -556,10 +572,9 @@ export const AiGuideChat: React.FC<AiGuideChatProps> = ({
     };
 
     // Strip any trailing unanswered user turn before appending the new attempt so history remains valid
+    const base = messagesRef.current;
     const cleanedBase =
-      messages.length > 0 && messages[messages.length - 1].sender === 'user'
-        ? messages.slice(0, -1)
-        : messages;
+      base.length > 0 && base[base.length - 1].sender === 'user' ? base.slice(0, -1) : base;
 
     const nextWithUser = [...cleanedBase, userMsg];
     setMessages(nextWithUser);
@@ -712,7 +727,7 @@ export const AiGuideChat: React.FC<AiGuideChatProps> = ({
                 if (isSpeaking) stopSpeaking();
                 setAutoVoiceMode(!autoVoiceMode);
               }}
-              className={`px-3 py-1 rounded-full text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs ${
+              className={`px-3.5 py-2 sm:px-3 sm:py-1 rounded-full text-[11px] font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-2xs ${
                 autoVoiceMode
                   ? 'bg-amber-100 text-amber-900 border border-amber-300'
                   : 'bg-stone-100 text-stone-600 border border-stone-200'
@@ -750,7 +765,7 @@ export const AiGuideChat: React.FC<AiGuideChatProps> = ({
       </div>
 
       {/* Main Chat Console Card - Liquid Water Card */}
-      <div className="liquid-water-card rounded-3xl border border-white/80 shadow-xl flex flex-col h-[calc(100vh-220px)] min-h-[480px] max-h-[720px] overflow-hidden">
+      <div className="liquid-water-card rounded-3xl border border-white/80 shadow-xl flex flex-col h-[calc(100dvh-150px)] sm:h-[calc(100dvh-220px)] min-h-[520px] sm:min-h-[480px] max-h-[720px] overflow-hidden">
         {/* Messages Stream */}
         <div className="flex-1 overflow-y-auto overflow-x-hidden p-4 sm:p-6 space-y-5">
           {messages.map((msg) => (
@@ -963,7 +978,7 @@ export const AiGuideChat: React.FC<AiGuideChatProps> = ({
                     'login'
                   )
                 }
-                className="px-3.5 py-1.5 rounded-full bg-stone-900 hover:bg-stone-800 text-amber-200 font-bold text-[11px] inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                className="px-4 py-2.5 sm:px-3.5 sm:py-1.5 rounded-full bg-stone-900 hover:bg-stone-800 text-amber-200 font-bold text-[11px] inline-flex items-center gap-1.5 cursor-pointer transition-colors"
               >
                 <LogIn className="w-3.5 h-3.5" />
                 <span>Вход</span>
@@ -977,7 +992,7 @@ export const AiGuideChat: React.FC<AiGuideChatProps> = ({
                     'register'
                   )
                 }
-                className="px-3.5 py-1.5 rounded-full bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold text-[11px] inline-flex items-center gap-1.5 cursor-pointer transition-colors"
+                className="px-4 py-2.5 sm:px-3.5 sm:py-1.5 rounded-full bg-white hover:bg-amber-100 text-amber-950 border border-amber-300 font-bold text-[11px] inline-flex items-center gap-1.5 cursor-pointer transition-colors"
               >
                 <UserPlus className="w-3.5 h-3.5" />
                 <span>Регистрация</span>

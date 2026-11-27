@@ -4,7 +4,6 @@ import {
   MapPin,
   Compass,
   ArrowRight,
-  Database,
   ChevronLeft,
   ChevronRight,
   Camera,
@@ -21,7 +20,6 @@ interface HeroProps {
   onExploreMap: () => void;
   onExploreCatalog: () => void;
   onAskGuide: () => void;
-  onOpenSsms?: () => void;
   onSelectCategory?: (categoryId: string) => void;
   onSearchSubmit?: (searchTerm: string) => void;
   isAdmin?: boolean;
@@ -103,7 +101,6 @@ export const Hero: React.FC<HeroProps> = ({
   onExploreMap,
   onExploreCatalog,
   onAskGuide,
-  onOpenSsms,
   onSelectCategory,
   onSearchSubmit,
   isAdmin = false,
@@ -278,17 +275,6 @@ export const Hero: React.FC<HeroProps> = ({
                   <span>Интерактивен пътеводител</span>
                 </button>
 
-                {/* Database Button - STRICTLY FOR ADMIN ONLY */}
-                {isAdmin && onOpenSsms && (
-                  <button
-                    onClick={onOpenSsms}
-                    className="btn-liquid-water water-shimmer px-4 sm:px-5 py-3 sm:py-3.5 rounded-full text-blue-800 font-bold text-xs sm:text-sm flex items-center justify-center gap-2 cursor-pointer shadow-xs shrink-0"
-                    title="Отвори SSMS Студио (само за администратори)"
-                  >
-                    <Database className="w-4 h-4 text-[#0078D4]" />
-                    <span>SSMS База (Админ)</span>
-                  </button>
-                )}
               </div>
             </div>
           </div>
@@ -366,27 +352,33 @@ export const Hero: React.FC<HeroProps> = ({
                     <button
                       key={p.id}
                       onClick={() => setActiveSlide(idx)}
-                      className={`h-2.5 rounded-full transition-all ${
-                        activeSlide === idx
-                          ? 'w-8 bg-amber-700'
-                          : 'w-2.5 bg-stone-300 hover:bg-stone-400'
-                      }`}
+                      className="py-3 px-0.5 -my-3 cursor-pointer group/dot"
                       aria-label={`Слайд ${idx + 1}`}
-                    />
+                      aria-current={activeSlide === idx ? 'true' : undefined}
+                    >
+                      {/* Small visual dot, larger invisible tap area for touch screens */}
+                      <span
+                        className={`block h-2.5 rounded-full transition-all ${
+                          activeSlide === idx
+                            ? 'w-8 bg-amber-700'
+                            : 'w-2.5 bg-stone-300 group-hover/dot:bg-stone-400'
+                        }`}
+                      />
+                    </button>
                   ))}
                 </div>
 
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => setActiveSlide((prev) => (prev - 1 + HERO_PLACES.length) % HERO_PLACES.length)}
-                    className="w-8 h-8 rounded-full liquid-orb-btn text-stone-800 hover:text-stone-950 flex items-center justify-center cursor-pointer shadow-xs hover:scale-105 active:scale-95 transition-all"
+                    className="w-10 h-10 sm:w-8 sm:h-8 rounded-full liquid-orb-btn text-stone-800 hover:text-stone-950 flex items-center justify-center cursor-pointer shadow-xs hover:scale-105 active:scale-95 transition-all"
                     aria-label="Предишен обект"
                   >
                     <ChevronLeft className="w-4 h-4" />
                   </button>
                   <button
                     onClick={() => setActiveSlide((prev) => (prev + 1) % HERO_PLACES.length)}
-                    className="w-8 h-8 rounded-full liquid-orb-btn text-stone-800 hover:text-stone-950 flex items-center justify-center cursor-pointer shadow-xs hover:scale-105 active:scale-95 transition-all"
+                    className="w-10 h-10 sm:w-8 sm:h-8 rounded-full liquid-orb-btn text-stone-800 hover:text-stone-950 flex items-center justify-center cursor-pointer shadow-xs hover:scale-105 active:scale-95 transition-all"
                     aria-label="Следващ обект"
                   >
                     <ChevronRight className="w-4 h-4" />
@@ -418,19 +410,6 @@ export const Hero: React.FC<HeroProps> = ({
           </div>
 
 
-          {isAdmin ? (
-            <div
-              onClick={onOpenSsms}
-              className="p-4 sm:p-5 liquid-water-card water-shimmer rounded-2xl shadow-2xs space-y-1 cursor-pointer transition-all group"
-            >
-              <div className="font-editorial text-3xl font-bold text-[#0078D4] flex items-center justify-between">
-                <span>SSMS</span>
-                <Database className="w-5 h-5 text-[#0078D4] group-hover:scale-110 transition-transform duration-300" />
-              </div>
-              <div className="text-xs font-semibold text-blue-900">T-SQL База данни</div>
-              <div className="text-[11px] text-blue-700">Отвори студио (Админ)</div>
-            </div>
-          ) : (
             <div
               onClick={onAskGuide}
               className="p-4 sm:p-5 liquid-water-card water-shimmer rounded-2xl shadow-2xs space-y-1 cursor-pointer transition-all group"
@@ -442,7 +421,6 @@ export const Hero: React.FC<HeroProps> = ({
               <div className="text-xs font-semibold text-stone-900">Теренен пътеводител</div>
               <div className="text-[11px] text-stone-600">Цени, хотели и метео прогнози</div>
             </div>
-          )}
 
         </div>
       </div>

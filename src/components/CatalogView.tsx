@@ -223,7 +223,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
           <div className="flex items-center p-1 btn-liquid-water rounded-full">
             <button
               onClick={() => setViewMode('grid')}
-              className={`p-1.5 rounded-full transition-all duration-300 ${
+              className={`p-2.5 sm:p-1.5 rounded-full transition-all duration-300 ${
                 viewMode === 'grid'
                   ? 'bg-stone-900 text-amber-200 shadow-xs'
                   : 'text-stone-600 hover:text-stone-950'
@@ -235,7 +235,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             </button>
             <button
               onClick={() => setViewMode('table')}
-              className={`p-1.5 rounded-full transition-all duration-300 ${
+              className={`p-2.5 sm:p-1.5 rounded-full transition-all duration-300 ${
                 viewMode === 'table'
                   ? 'bg-stone-900 text-amber-200 shadow-xs'
                   : 'text-stone-600 hover:text-stone-950'
@@ -325,7 +325,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
         <div className="flex items-center gap-2 pt-3 border-t border-stone-300/40 overflow-x-auto pb-1.5 sm:pb-0 flex-nowrap sm:flex-wrap">
           <button
             onClick={() => setSelectedCategory('all')}
-            className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all duration-300 cursor-pointer flex items-center gap-2 shrink-0 ${
+            className={`px-3.5 py-2.5 sm:py-1.5 rounded-full text-xs font-bold transition-all duration-300 cursor-pointer flex items-center gap-2 shrink-0 ${
               selectedCategory === 'all'
                 ? 'btn-liquid-amber water-shimmer liquid-iridescent-rim text-stone-950 shadow-md scale-105'
                 : 'liquid-glass-focus-pill text-stone-700 hover:text-stone-950'
@@ -343,7 +343,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
               <button
                 key={cat.id}
                 onClick={() => setSelectedCategory(cat.id)}
-                className={`px-3.5 py-1.5 rounded-full text-xs font-bold transition-all duration-300 cursor-pointer flex items-center gap-2 shrink-0 ${
+                className={`px-3.5 py-2.5 sm:py-1.5 rounded-full text-xs font-bold transition-all duration-300 cursor-pointer flex items-center gap-2 shrink-0 ${
                   isSel
                     ? 'btn-liquid-amber water-shimmer liquid-iridescent-rim text-stone-950 shadow-md scale-105'
                     : 'liquid-glass-focus-pill text-stone-700 hover:text-stone-950'
@@ -415,7 +415,7 @@ export const CatalogView: React.FC<CatalogViewProps> = ({
             {selectedSeason !== currentSeasonId && (
               <button
                 onClick={() => setSelectedSeason(currentSeasonId as any)}
-                className="btn-liquid-water water-shimmer px-3.5 py-1.5 text-xs font-semibold text-emerald-800 rounded-full flex items-center gap-1.5 shadow-2xs hover:border-emerald-500 cursor-pointer"
+                className="btn-liquid-water water-shimmer px-3.5 py-2.5 sm:py-1.5 text-xs font-semibold text-emerald-800 rounded-full flex items-center gap-1.5 shadow-2xs hover:border-emerald-500 cursor-pointer"
                 title="Филтрирай за дестинации, подходящи за актуалния сезон"
               >
                 <Sparkles className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />

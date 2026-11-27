@@ -25,11 +25,14 @@ namespace HiddenBulgaria.Controllers
         public record LoginDto(string Email, string Password);
         public record RegisterDto(string Name, string Email, string Password);
 
-        private static string HashPassword(string password, string salt)
+        internal static string HashPassword(string password, string salt)
         {
             using var pbkdf2 = new Rfc2898DeriveBytes(password, Encoding.UTF8.GetBytes(salt), 1000, HashAlgorithmName.SHA512);
             return Convert.ToHexString(pbkdf2.GetBytes(64)).ToLower();
         }
+
+        private static bool HashesEqual(string a, string b) =>
+            CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(a), Encoding.UTF8.GetBytes(b));
 
         [HttpPost("login")]
         public async Task<IActionResult> Login([FromBody] LoginDto dto)
@@ -42,8 +45,8 @@ namespace HiddenBulgaria.Controllers
             if (user == null)
                 return Unauthorized(new { error = "Невалиден имейл или парола." });
 
-            var hash = HashPassword(dto.Password, user.salt);
-            if (hash != user.PasswordHash)
+            var hash = HashPassword(dto.Password, user.Salt);
+            if (!HashesEqual(hash, user.PasswordHash))
                 return Unauthorized(new { error = "Невалиден имейл или парола." });
 
             var claims = new List<Claim>

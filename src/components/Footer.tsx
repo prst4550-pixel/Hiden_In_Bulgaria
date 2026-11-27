@@ -63,39 +63,32 @@ export const Footer: React.FC<FooterProps> = ({
             </div>
             <ul className="space-y-2 text-stone-400">
               <li>
-                <button type="button" onClick={() => onNavClick('home')} className="hover:text-amber-300 transition-colors cursor-pointer">
+                <button type="button" onClick={() => onNavClick('home')} className="py-1.5 sm:py-0 hover:text-amber-300 transition-colors cursor-pointer">
                   Начална страница
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => onNavClick('map')} className="hover:text-amber-300 transition-colors cursor-pointer">
+                <button type="button" onClick={() => onNavClick('map')} className="py-1.5 sm:py-0 hover:text-amber-300 transition-colors cursor-pointer">
                   Интерактивна карта
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => onNavClick('catalog')} className="hover:text-amber-300 transition-colors cursor-pointer">
+                <button type="button" onClick={() => onNavClick('catalog')} className="py-1.5 sm:py-0 hover:text-amber-300 transition-colors cursor-pointer">
                   Пълен каталог на местата
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => onNavClick('routes')} className="hover:text-amber-300 transition-colors cursor-pointer">
+                <button type="button" onClick={() => onNavClick('routes')} className="py-1.5 sm:py-0 hover:text-amber-300 transition-colors cursor-pointer">
                   Експедиционни маршрути
                 </button>
               </li>
-              {isAdmin && (
-                <li>
-                  <button type="button" onClick={() => onNavClick('ssms')} className="text-blue-400 hover:text-blue-300 transition-colors font-medium flex items-center gap-1 cursor-pointer">
-                    <span>SSMS База данни (Админ)</span>
-                  </button>
-                </li>
-              )}
               <li>
-                <button type="button" onClick={() => onNavClick('guide')} className="hover:text-amber-300 transition-colors cursor-pointer">
+                <button type="button" onClick={() => onNavClick('guide')} className="py-1.5 sm:py-0 hover:text-amber-300 transition-colors cursor-pointer">
                   Пътеводителят
                 </button>
               </li>
               <li>
-                <button type="button" onClick={() => onNavClick('community')} className="hover:text-amber-300 transition-colors cursor-pointer">
+                <button type="button" onClick={() => onNavClick('community')} className="py-1.5 sm:py-0 hover:text-amber-300 transition-colors cursor-pointer">
                   Предложи скрито място
                 </button>
               </li>
@@ -167,16 +160,16 @@ export const Footer: React.FC<FooterProps> = ({
             © {new Date().getFullYear()} Скрито в България. Всички права запазени.
           </div>
           <div className="flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-stone-400">
-            <button type="button" onClick={() => onNavClick('privacy')} className="hover:text-amber-300 transition-colors cursor-pointer">
+            <button type="button" onClick={() => onNavClick('privacy')} className="py-1.5 sm:py-0 hover:text-amber-300 transition-colors cursor-pointer">
               Поверителност
             </button>
-            <button type="button" onClick={() => onNavClick('terms')} className="hover:text-amber-300 transition-colors cursor-pointer">
+            <button type="button" onClick={() => onNavClick('terms')} className="py-1.5 sm:py-0 hover:text-amber-300 transition-colors cursor-pointer">
               Общи условия
             </button>
-            <button type="button" onClick={() => onNavClick('cookies')} className="hover:text-amber-300 transition-colors cursor-pointer">
+            <button type="button" onClick={() => onNavClick('cookies')} className="py-1.5 sm:py-0 hover:text-amber-300 transition-colors cursor-pointer">
               Бисквитки
             </button>
-            <button type="button" onClick={() => onNavClick('contact')} className="hover:text-amber-300 transition-colors cursor-pointer">
+            <button type="button" onClick={() => onNavClick('contact')} className="py-1.5 sm:py-0 hover:text-amber-300 transition-colors cursor-pointer">
               Контакти
             </button>
             <span className="hidden sm:inline text-stone-600">·</span>

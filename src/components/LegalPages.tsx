@@ -479,7 +479,7 @@ export const LegalPages: React.FC<LegalPagesProps> = ({ mode, onNavigate }) => {
                   type="checkbox"
                   checked={consent}
                   onChange={(e) => setConsent(e.target.checked)}
-                  className="mt-0.5 w-4 h-4 rounded border-stone-300 text-amber-800 focus:ring-amber-800"
+                  className="mt-0.5 w-5 h-5 sm:w-4 sm:h-4 shrink-0 rounded border-stone-300 text-amber-800 focus:ring-amber-800"
                 />
                 <span>
                   Съгласен съм предоставените данни да бъдат обработени единствено за отговор на това запитване съгласно{' '}

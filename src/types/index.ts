@@ -93,6 +93,8 @@ export interface CommunitySuggestion {
   contact?: string;
   status: 'pending' | 'approved' | 'rejected';
   userId?: string;
+  /** Id of the catalog place created when the suggestion was approved. */
+  placeId?: string;
   createdAt: string;
 }
 
@@ -138,7 +140,41 @@ export interface ContactMessage {
   email: string;
   subject: string;
   message: string;
+  isRead?: boolean;
   createdAt: string;
+}
+
+export interface AdminReview extends Review {
+  placeName: string;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  action: string;
+  details: string;
+  adminEmail: string;
+  createdAt: string;
+}
+
+export interface AdminStats {
+  totals: {
+    places: number;
+    featuredPlaces: number;
+    users: number;
+    blockedUsers: number;
+    reviews: number;
+    averageRating: number | null;
+    pendingSuggestions: number;
+    suggestions: number;
+    messages: number;
+    unreadMessages: number;
+  };
+  placesByCategory: { name: string; count: number }[];
+  placesByRegion: { name: string; count: number }[];
+  topRatedPlaces: { id: string; name: string; rating: number; reviewCount: number }[];
+  mostFavoritedPlaces: { id: string; name: string; count: number }[];
+  registrationsLast30Days: number;
+  reviewsLast30Days: number;
 }
 
 export interface ChatMessage {

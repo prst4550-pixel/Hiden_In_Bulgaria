@@ -6,7 +6,7 @@ A full-stack commercial web platform, interactive cartographic atlas, and cultur
 
 ## Project Overview
 
-**Skrito v Bulgaria** (*Скрито в България*) is an editorial travel and geographic discovery web application built with React, TypeScript, Tailwind CSS, Leaflet, and an Express Node.js backend. The platform pairs an authentic regional archive with interactive terrain mapping, expedition route planning, a field advisor interface, community moderation workflows, and an administrative T-SQL schema and query console compatible with Microsoft SQL Server Management Studio (SSMS).
+**Skrito v Bulgaria** (*Скрито в България*) is an editorial travel and geographic discovery web application built with React, TypeScript, Tailwind CSS, Leaflet, and an Express Node.js backend. The platform pairs an authentic regional archive with interactive terrain mapping, expedition route planning, a field advisor interface, community moderation workflows, and an administrative center with statistics, moderation tools and an audit log.
 
 ---
 
@@ -36,8 +36,11 @@ Visitors can explore Bulgaria's lesser-known cultural and natural destinations t
   - Cryptographically salted `scrypt` password hashing, timing-safe comparison, HMAC-signed Bearer tokens held strictly in memory, and role-based access control (`admin` vs. `user`).
   - First-run administrator activation flow or environment-based administrator configuration (`ADMIN_PASSCODE`).
   - Full CRUD management for destinations, moderation of community suggestions, user role registry, and contact message inbox.
-- **SSMS & T-SQL Management Studio** (`src/components/SsmsStudioView.tsx`):
-  - Admin-only browser console displaying relational schema metadata (`dbo.Places`, `dbo.Categories`, `dbo.Regions`, `dbo.Routes`, `dbo.RouteStops`, `dbo.Reviews`, `dbo.CommunitySuggestions`), executing read-only T-SQL queries, and exporting a complete `BulgariaTravel_SSMS.sql` deployment script with `GEOGRAPHY (SRID 4326)` spatial types and stored procedures.
+- **Administrative Center** (`src/components/AdminPanel.tsx`):
+  - Dashboard with catalog, user, review and inbox statistics; places by category/region; top-rated and most-favorited places.
+  - Suggestion moderation with status filters (approve / reject / return for review / delete). Un-approving a suggestion removes the place it created.
+  - Place management with search, category filter and one-click "featured" toggle; review moderation; user blocking/removal.
+  - Contact inbox with read/unread state, reply via e-mail and deletion; audit log of every admin action.
 
 ---
 
@@ -108,7 +111,7 @@ Edit `.env` at the project root before starting the server in staging or product
 ├── .env.example                 # Environment variable template (no secrets)
 ├── index.html                   # Document entry point with SEO, OpenGraph, and JSON-LD metadata
 ├── package.json                 # Dependencies and build/runtime scripts
-├── server.ts                    # Express API server, security headers, CORS, auth, SSMS & Field Guide routes
+├── server.ts                    # Express API server, security headers, CORS, auth, admin & Field Guide routes
 ├── vite.config.ts               # Vite bundler configuration with vendor chunk splitting
 ├── data/
 │   └── database.json            # Persistent runtime store (places, suggestions, reviews, users, inquiries)
@@ -150,7 +153,6 @@ Edit `.env` at the project root before starting the server in staging or product
         ├── PlaceDetailModal.tsx # Landmark dossier, GPS coordinates, reviews, and nearby locations
         ├── ProfileModal.tsx     # Isolated user profile management and personal activity modal
         ├── RouteList.tsx        # Curated and custom expedition routes showcase
-        └── SsmsStudioView.tsx   # Admin-only T-SQL query runner and SSMS export console
 ```
 
 ---
@@ -198,7 +200,7 @@ The platform enforces multiple layered security controls:
 
 - **Authentication & Sessions**: Passwords are hashed with `crypto.scryptSync` using per-user 32-byte cryptographic salts and compared using `crypto.timingSafeEqual`. Session tokens are HMAC-SHA256 signed with timing-safe signature verification and stored strictly in client JS memory (never in `localStorage` or `sessionStorage`).
 - **Zero Hardcoded Credentials**: No default administrator passwords exist in source code or client bundles. Administrative access requires either `ADMIN_PASSCODE` in server environment variables or completion of the one-time first-run setup flow.
-- **Role-Based Access Control**: Server middleware (`requireAdmin`) enforces administrator verification (`401`/`403`) across user listings, moderation endpoints, landmark mutations, contact inquiry retrieval, and all SSMS schema/query/export routes.
+- **Role-Based Access Control**: Server middleware (`requireAdmin`) enforces administrator verification (`401`/`403`) across user listings, moderation endpoints, landmark mutations, contact inquiry retrieval, review moderation, statistics and audit-log routes.
 - **XSS Prevention**: Map markers and Leaflet popups construct DOM nodes exclusively via `document.createElement`, `textContent`, and validated URL helpers, avoiding raw HTML string injection.
 - **Input Validation & Rate Limiting**: Strict coordinate bounds for Bulgaria, whitelisted enum and URL-protocol checks, size-bounded base64 image checks, and per-IP sliding-window rate limiters on authentication, public submissions, and guide endpoints.
 - **HTTP Hardening & CORS**: Disables `X-Powered-By`, sets `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy`, `Cross-Origin-Opener-Policy`, conditional HSTS, and a strict host-aware `/api` CORS allowlist.
@@ -208,6 +210,5 @@ The platform enforces multiple layered security controls:
 ## Maintenance
 
 - **Backups**: Regularly back up `data/database.json` and uploaded assets in `public/places/` before deploying updates or bulk importing destinations.
-- **T-SQL Synchronization**: Use the admin SSMS Studio export (`BulgariaTravel_SSMS.sql`) after catalog edits to keep external Microsoft SQL Server replicas synchronized.
 - **Dependency Hygiene**: Periodically run `bun audit` and `npm run lint` to verify dependency integrity and TypeScript strictness.
 - **Contact & Moderation**: Review pending community submissions and visitor inquiries regularly inside the Administrative Center (`Предложения` and `Запитвания` tabs).

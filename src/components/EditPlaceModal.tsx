@@ -155,8 +155,8 @@ export const EditPlaceModal: React.FC<EditPlaceModalProps> = ({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-stone-950/70 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fade-in overflow-y-auto">
-      <div className="liquid-water-card w-full max-w-3xl rounded-3xl shadow-2xl flex flex-col max-h-[92vh] overflow-hidden my-auto border border-white/70">
+    <div className="fixed inset-0 z-[60] bg-stone-950/70 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fade-in overflow-y-auto">
+      <div className="liquid-water-card w-full max-w-3xl rounded-3xl shadow-2xl flex flex-col max-h-[92dvh] overflow-hidden my-auto border border-white/70">
         {/* Header */}
         <div className="p-4 sm:p-5 border-b border-stone-200/60 bg-white/40 backdrop-blur-md flex items-center justify-between">
           <div className="flex items-center gap-3">

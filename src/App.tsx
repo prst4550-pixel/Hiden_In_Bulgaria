@@ -28,7 +28,6 @@ import { ProfileModal } from './components/ProfileModal';
 import { AdminPanel } from './components/AdminPanel';
 import { AuthModal } from './components/AuthModal';
 import { EditPlaceModal } from './components/EditPlaceModal';
-import { SsmsStudioView } from './components/SsmsStudioView';
 import { Footer } from './components/Footer';
 import { LegalPages, LegalPageMode } from './components/LegalPages';
 import { handleImageError } from './utils/imageFallback';
@@ -40,7 +39,6 @@ import {
   Edit3,
   Shield,
   BookOpen,
-  Database,
   Camera,
   ArrowUpRight,
   AlertTriangle,
@@ -54,7 +52,6 @@ const TAB_TITLES: Record<string, string> = {
   routes: 'Експедиционни маршрути — Скрито в България',
   guide: 'Пътеводител — Скрито в България',
   community: 'Предложи скрито място — Скрито в България',
-  ssms: 'SSMS База данни — Скрито в България',
   privacy: 'Политика за поверителност — Скрито в България',
   terms: 'Общи условия — Скрито в България',
   cookies: 'Политика за бисквитки — Скрито в България',
@@ -68,7 +65,6 @@ const TAB_DESCRIPTIONS: Record<string, string> = {
   routes: 'Експедиционни маршрути и планиране на собствен маршрут с интерактивно проследяване на картата.',
   guide: 'Интерактивен пътеводител с проверка на цени, хотели, прогноза за времето и разпознаване на забележителности по снимка.',
   community: 'Предложете ново скрито природно или историческо място в България за проверка и включване в каталога.',
-  ssms: 'Административна T-SQL конзола и управление на каталога.',
   privacy: 'Политика за поверителност и защита на личните данни на платформата Скрито в България.',
   terms: 'Общи условия за ползване на платформата Скрито в България.',
   cookies: 'Информация за локалното съхранение и настройките за поверителност.',
@@ -109,6 +105,10 @@ export default function App() {
 
   // Authentication State
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  // Always-current user, so actions queued before login (whose closures captured
+  // `currentUser === null`) don't re-open the auth modal after a successful login.
+  const currentUserRef = useRef<User | null>(null);
+  currentUserRef.current = currentUser;
   const [isAuthOpen, setIsAuthOpen] = useState(false);
   const [authInitialTab, setAuthInitialTab] = useState<'login' | 'register'>('login');
   const [authPromptMessage, setAuthPromptMessage] = useState<string | null>(null);
@@ -291,8 +291,9 @@ export default function App() {
       action: (user: User, profile?: UserProfileData | null) => void | Promise<void>,
       tab: 'login' | 'register' = 'login'
     ): boolean => {
-      if (currentUser) {
-        void action(currentUser);
+      const user = currentUserRef.current;
+      if (user) {
+        void action(user);
         return true;
       }
       pendingAuthActionRef.current = action;
@@ -301,7 +302,7 @@ export default function App() {
       setIsAuthOpen(true);
       return false;
     },
-    [currentUser]
+    []
   );
 
   const handleToggleFavorite = (placeId: string) => {
@@ -431,6 +432,7 @@ export default function App() {
     setAuthPromptMessage(null);
 
     const profile = await loadIsolatedUserProfile(places);
+    currentUserRef.current = user;
     setCurrentUser(user);
     void loadAllData();
 
@@ -445,6 +447,7 @@ export default function App() {
 
   const handleLogout = async () => {
     await logoutUser();
+    currentUserRef.current = null;
     pendingAuthActionRef.current = null;
     setAuthPromptMessage(null);
     setCurrentUser(null);
@@ -607,7 +610,6 @@ export default function App() {
                 setCurrentTab('catalog');
               }}
               onAskGuide={() => setCurrentTab('guide')}
-              onOpenSsms={() => setCurrentTab('ssms')}
               onSelectCategory={handleHeroCategory}
               onSearchSubmit={handleHeroSearch}
               isAdmin={isAdmin}
@@ -787,7 +789,7 @@ export default function App() {
                               e.stopPropagation();
                               handleLocateOnMap(place);
                             }}
-                            className="px-2.5 py-1 rounded-lg bg-[#F4EFE6] hover:bg-[#EAE2D2] text-stone-800 text-[11px] font-semibold flex items-center gap-1 border border-stone-300/80 transition-all active:scale-95"
+                            className="px-3 py-2 sm:px-2.5 sm:py-1 rounded-lg bg-[#F4EFE6] hover:bg-[#EAE2D2] text-stone-800 text-[11px] font-semibold flex items-center gap-1 border border-stone-300/80 transition-all active:scale-95"
                           >
                             <MapPin className="w-3 h-3 text-amber-800" />
                             <span>Карта</span>
@@ -803,74 +805,6 @@ export default function App() {
                 </div>
               </div>
             </section>
-
-            {/* Microsoft SQL Server / SSMS T-SQL Integration Showcase Banner (ADMIN ONLY) */}
-            {isAdmin && (
-              <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-                <div className="bg-[#18181B] text-white rounded-3xl p-6 sm:p-10 border border-[#27272A] shadow-2xl relative overflow-hidden">
-                  <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center relative z-10">
-                    <div className="lg:col-span-7 space-y-4">
-                      <div className="inline-flex items-center gap-2 px-3 py-1 bg-[#0078D4]/20 text-[#60A5FA] rounded-lg text-xs font-mono font-semibold border border-[#0078D4]/40">
-                        <Database className="w-3.5 h-3.5 text-[#60A5FA]" />
-                        <span>Microsoft SQL Server (SSMS 18/19/20) & T-SQL Database (Администратор)</span>
-                      </div>
-
-                      <h3 className="font-editorial text-3xl sm:text-4xl font-bold text-white leading-tight">
-                        Пълната база данни на България, готова за SSMS
-                      </h3>
-
-                      <p className="text-xs sm:text-sm text-stone-300 leading-relaxed max-w-xl">
-                        Всички 48 исторически и природни локации са моделирани в пълна релационна T-SQL база данни с native <code>GEOGRAPHY (SRID 4326)</code> типове, пространствени индекси, изгледи и съхранени процедури за разстояния.
-                      </p>
-
-                      <div className="pt-2 flex flex-wrap items-center gap-3">
-                        <button
-                          onClick={() => setCurrentTab('ssms')}
-                          className="px-6 py-3.5 bg-gradient-to-b from-[#0078D4] to-[#005A9E] hover:from-[#106EBE] hover:to-[#004E8C] text-white text-xs sm:text-sm font-bold rounded-xl border border-blue-400/50 shadow-md flex items-center gap-2 transition-all active:scale-95"
-                        >
-                          <Database className="w-4 h-4" />
-                          <span>Отвори SSMS Студио в браузъра</span>
-                        </button>
-
-                        <a
-                          href="/api/ssms/export"
-                          download="BulgariaTravel_SSMS.sql"
-                          className="px-5 py-3.5 bg-[#27272A] hover:bg-[#3F3F46] text-stone-200 text-xs sm:text-sm font-bold rounded-xl border border-[#3F3F46] shadow-sm flex items-center gap-2 transition-all active:scale-95"
-                        >
-                          <span>Свали .SQL файл (60 KB)</span>
-                          <ArrowUpRight className="w-4 h-4 text-amber-400" />
-                        </a>
-                      </div>
-                    </div>
-
-                    {/* Right side: T-SQL code snippet replica */}
-                    <div className="lg:col-span-5 bg-[#0F0F11] rounded-2xl border border-[#27272A] p-4 font-mono text-[11px] text-stone-300 space-y-2 shadow-inner">
-                      <div className="flex items-center justify-between text-stone-500 text-[10px] pb-2 border-b border-[#27272A]">
-                        <span>BulgariaTravel_SSMS.sql</span>
-                        <span className="text-emerald-400">● T-SQL Validated</span>
-                      </div>
-                      <div className="text-blue-400">-- Създаване на база данни в SSMS</div>
-                      <div>
-                        <span className="text-purple-400">CREATE DATABASE</span> [BulgariaTravel]
-                      </div>
-                      <div>
-                        <span className="text-purple-400">COLLATE</span> Cyrillic_General_100_CI_AI_SC_UTF8;
-                      </div>
-                      <div className="text-blue-400 pt-1">-- Пространствено търсене в радиус:</div>
-                      <div>
-                        <span className="text-purple-400">SELECT</span> Name, GeoLocation.<span className="text-amber-300">STDistance</span>(@P) / 1000.0 <span className="text-purple-400">AS</span> Km
-                      </div>
-                      <div>
-                        <span className="text-purple-400">FROM</span> dbo.Places <span className="text-purple-400">WHERE</span> IsFeatured = 1;
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Subtle blue background glow */}
-                  <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-[#0078D4]/10 blur-3xl pointer-events-none" />
-                </div>
-              </section>
-            )}
 
             {/* Geographic Regions of Bulgaria with Real Photos */}
             <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 space-y-8">
@@ -1045,37 +979,6 @@ export default function App() {
           />
         )}
 
-        {currentTab === 'ssms' && (
-          isAdmin ? (
-            <SsmsStudioView onBackToExplore={() => setCurrentTab('home')} />
-          ) : (
-            <div className="max-w-md mx-auto my-20 p-8 bg-white rounded-3xl border border-stone-200 text-center space-y-4 shadow-sm">
-              <div className="w-12 h-12 rounded-2xl bg-amber-50 text-amber-800 flex items-center justify-center mx-auto border border-amber-200">
-                <Shield className="w-6 h-6 text-amber-800" />
-              </div>
-              <h3 className="font-editorial text-2xl font-bold text-stone-900">
-                Достъпът е ограничен
-              </h3>
-              <p className="text-xs text-stone-600 leading-relaxed">
-                Студиото за управление на T-SQL базата данни (SSMS) е налично единствено за системни администратори.
-              </p>
-              <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
-                <button
-                  onClick={() => setIsAuthOpen(true)}
-                  className="w-full sm:w-auto px-4 py-2.5 bg-stone-900 text-amber-200 text-xs font-semibold rounded-xl hover:bg-stone-800 transition-colors shadow-2xs"
-                >
-                  Вход като администратор
-                </button>
-                <button
-                  onClick={() => setCurrentTab('home')}
-                  className="w-full sm:w-auto px-4 py-2.5 bg-[#F4EFE6] text-stone-800 text-xs font-semibold rounded-xl hover:bg-[#EBE4D8] transition-colors"
-                >
-                  Начална страница
-                </button>
-              </div>
-            </div>
-          )
-        )}
 
         {currentTab === 'community' && (
           <CommunityView
@@ -1184,7 +1087,6 @@ export default function App() {
           places={places}
           onEditPlace={handleEditPlace}
           onAddNewPlace={handleAddNewPlace}
-          onOpenSsms={() => setCurrentTab('ssms')}
         />
       )}
 

@@ -13,3 +13,8 @@ coverage/
 .vite/
 .eslintcache
 *.tsbuildinfo
+
+# .NET build output
+bin/
+obj/
+*.db
