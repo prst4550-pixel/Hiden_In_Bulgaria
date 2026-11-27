@@ -81,6 +81,23 @@ export const PlaceDetailModal: React.FC<PlaceDetailModalProps> = ({
     }
   }, [currentUser]);
 
+useEffect(() => {
+  if (currentUser && !authorName.trim()) {
+    setAuthorName(currentUser.name);
+  }
+}, [currentUser]);
+
+// Process queued review after authentication
+useEffect(() => {
+  if (currentUser && queuedReviewSubmit) {
+    setQueuedReviewSubmit(false);
+    void performReviewSubmit(authorName.trim() || currentUser.name);
+  }
+}, [currentUser, queuedReviewSubmit]);
+
+// All hooks must be above this condition
+if (!isOpen || !place) return null;
+
   if (!isOpen || !place) return null;
 
   const handleCopyCoords = () => {
@@ -135,13 +152,6 @@ export const PlaceDetailModal: React.FC<PlaceDetailModalProps> = ({
       setIsSubmittingReview(false);
     }
   };
-
-  useEffect(() => {
-    if (currentUser && queuedReviewSubmit) {
-      setQueuedReviewSubmit(false);
-      void performReviewSubmit(authorName.trim() || currentUser.name);
-    }
-  }, [currentUser, queuedReviewSubmit]);
 
   const handleReviewSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
